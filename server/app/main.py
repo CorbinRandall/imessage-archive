@@ -156,6 +156,7 @@ def start_index(req: IndexRequest) -> dict[str, Any]:
         indexer.index_all()
 
     threading.Thread(target=run, daemon=True).start()
+    archive.invalidate_caches()
     return {"status": "started", "full": req.full}
 
 

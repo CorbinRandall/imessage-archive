@@ -98,12 +98,26 @@ $('#btn-reindex').onclick = async () => {
 // Browse
 let allChats = [];
 async function loadChats() {
-  const data = await api('/api/chats');
-  allChats = data.chats || [];
-  renderChatList(allChats);
+  $('#chat-list').innerHTML = '<p class="muted">Loading conversations...</p>';
+  $('#chat-detail').innerHTML = '<p class="muted">Select a conversation</p>';
+  try {
+    const data = await api('/api/chats');
+    allChats = data.chats || [];
+    if (!allChats.length) {
+      $('#chat-list').innerHTML = '<p class="muted">No conversations yet. Run <strong>imessage-backup</strong> on your Mac.</p>';
+      return;
+    }
+    renderChatList(allChats);
+  } catch (err) {
+    $('#chat-list').innerHTML = `<p class="muted">Error loading chats: ${esc(err.message)}</p>`;
+  }
 }
 
 function renderChatList(chats) {
+  if (!chats.length) {
+    $('#chat-list').innerHTML = '<p class="muted">No matching conversations.</p>';
+    return;
+  }
   $('#chat-list').innerHTML = chats.map(c => `
     <div class="chat-item" data-id="${c.chat_id}" onclick="openChat(${c.chat_id})">
       <div class="title">${esc(c.chat)}</div>

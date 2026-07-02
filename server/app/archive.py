@@ -1,56 +1,91 @@
 from __future__ import annotations
 
 import json
+import re
+import time
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from app.config import ATTACHMENTS_DIR, CONTACTS_PATH, DATA_DIR, HTML_ATTACHMENTS_DIR, HTML_DIR, JSONL_PATH, RAW_DIR
 
+_stats_cache: dict[str, Any] = {"at": 0.0, "data": {}}
+_STATS_TTL = 60.0
+
+
+def _normalize_phone(value: str) -> str:
+    digits = re.sub(r"\D", "", value or "")
+    if len(digits) == 11 and digits.startswith("1"):
+        return digits[1:]
+    return digits
+
+
+@lru_cache(maxsize=1)
+def _contacts_data() -> tuple[dict[str, str], dict[str, str]]:
+    if not CONTACTS_PATH.exists():
+        return {}, {}
+    raw: dict[str, str] = json.loads(CONTACTS_PATH.read_text(encoding="utf-8"))
+    by_phone: dict[str, str] = {}
+    for key, name in raw.items():
+        tail = _normalize_phone(key)
+        if len(tail) >= 10:
+            by_phone[tail[-10:]] = name
+    return raw, by_phone
+
 
 def load_contacts() -> dict[str, str]:
-    if not CONTACTS_PATH.exists():
-        return {}
-    return json.loads(CONTACTS_PATH.read_text(encoding="utf-8"))
+    raw, _ = _contacts_data()
+    return raw
 
 
 def resolve_display_name(value: str) -> str:
-    contacts = load_contacts()
     if not value or value == "Me":
         return value
-    if value in contacts:
-        return contacts[value]
-    digits = "".join(c for c in value if c.isdigit())
-    if len(digits) >= 10:
-        tail = digits[-10:]
-        for key, name in contacts.items():
-            key_digits = "".join(c for c in key if c.isdigit())
-            if key_digits.endswith(tail):
-                return name
+    raw, by_phone = _contacts_data()
+    if value in raw:
+        return raw[value]
+    tail = _normalize_phone(value)
+    if len(tail) >= 10 and tail[-10:] in by_phone:
+        return by_phone[tail[-10:]]
+    email = value.strip().lower()
+    if email in raw:
+        return raw[email]
     return value
 
 
-def load_messages() -> list[dict[str, Any]]:
+def _jsonl_mtime() -> float:
+    try:
+        return JSONL_PATH.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+@lru_cache(maxsize=2)
+def _messages_cached(mtime: float) -> tuple[dict[str, Any], ...]:
     if not JSONL_PATH.exists():
-        return []
+        return tuple()
     messages: list[dict[str, Any]] = []
     with JSONL_PATH.open("r", encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
             if line:
                 messages.append(json.loads(line))
-    return messages
+    return tuple(messages)
+
+
+def load_messages() -> list[dict[str, Any]]:
+    return list(_messages_cached(_jsonl_mtime()))
 
 
 def list_chats() -> list[dict[str, Any]]:
-    messages = load_messages()
     chats: dict[str, dict[str, Any]] = {}
-    for msg in messages:
+    for msg in load_messages():
         key = str(msg.get("chat_id", msg.get("chat")))
-        chat_name = resolve_display_name(msg.get("chat") or "")
         if key not in chats:
             chats[key] = {
                 "chat_id": msg.get("chat_id"),
-                "chat": chat_name,
-                "participants": [resolve_display_name(p) for p in msg.get("participants", [])],
+                "chat": msg.get("chat") or "Unknown",
+                "participants": msg.get("participants") or [],
                 "message_count": 0,
                 "last_date": msg.get("date"),
             }
@@ -61,31 +96,13 @@ def list_chats() -> list[dict[str, Any]]:
 
 
 def chat_messages(chat_id: int, limit: int = 500, offset: int = 0) -> list[dict[str, Any]]:
-    result = []
-    for msg in load_messages():
-        if msg.get("chat_id") != chat_id:
-            continue
-        enriched = dict(msg)
-        enriched["chat"] = resolve_display_name(msg.get("chat") or "")
-        enriched["sender"] = resolve_display_name(msg.get("sender") or "")
-        enriched["participants"] = [resolve_display_name(p) for p in msg.get("participants", [])]
-        result.append(enriched)
+    result = [msg for msg in load_messages() if msg.get("chat_id") == chat_id]
     return result[offset : offset + limit]
 
 
 def resolve_media_path(relative: str) -> Path | None:
     rel = relative.lstrip("/")
-    candidates = [DATA_DIR / rel]
-
-    if rel.startswith("raw/"):
-        candidates.append(DATA_DIR / rel)
-    else:
-        candidates.append(RAW_DIR / rel.replace("raw/", "", 1))
-
-    if rel.startswith("html-export/"):
-        candidates.append(DATA_DIR / rel)
-    else:
-        candidates.append(HTML_DIR / rel.replace("html-export/", "", 1))
+    candidates = [DATA_DIR / rel, RAW_DIR / rel.removeprefix("raw/"), HTML_DIR / rel.removeprefix("html-export/")]
 
     for candidate in candidates:
         try:
@@ -97,10 +114,10 @@ def resolve_media_path(relative: str) -> Path | None:
             return resolved
 
     name = Path(relative).name
-    for root in (ATTACHMENTS_DIR, HTML_ATTACHMENTS_DIR, HTML_DIR):
+    for root in (HTML_ATTACHMENTS_DIR, ATTACHMENTS_DIR):
         if not root.exists():
             continue
-        for path in root.rglob(name):
+        for path in root.glob(f"**/{name}"):
             if path.is_file():
                 return path
     return None
@@ -115,19 +132,39 @@ def list_html_exports() -> list[dict[str, str]]:
     ]
 
 
+def _count_files(root: Path) -> int:
+    if not root.exists():
+        return 0
+    try:
+        return sum(1 for p in root.rglob("*") if p.is_file())
+    except OSError:
+        return 0
+
+
 def archive_stats() -> dict[str, Any]:
+    global _stats_cache
+    now = time.time()
+    if _stats_cache["data"] and now - _stats_cache["at"] < _STATS_TTL:
+        return _stats_cache["data"]
+
     messages = load_messages()
-    attachment_count = sum(len(m.get("attachments") or []) for m in messages)
-    html_count = len(list(HTML_DIR.glob("*.html"))) if HTML_DIR.exists() else 0
-    raw_size = sum(f.stat().st_size for f in RAW_DIR.rglob("*") if f.is_file()) if RAW_DIR.exists() else 0
-    html_media = sum(1 for _ in HTML_ATTACHMENTS_DIR.rglob("*") if _.is_file()) if HTML_ATTACHMENTS_DIR.exists() else 0
-    return {
+    chats = list_chats()
+    data = {
         "message_count": len(messages),
-        "chat_count": len(list_chats()),
-        "attachment_count": attachment_count,
-        "html_export_count": html_count,
-        "html_media_count": html_media,
-        "raw_bytes": raw_size,
+        "chat_count": len(chats),
+        "attachment_count": sum(len(m.get("attachments") or []) for m in messages),
+        "html_export_count": len(list(HTML_DIR.glob("*.html"))) if HTML_DIR.exists() else 0,
+        "html_media_count": _count_files(HTML_ATTACHMENTS_DIR),
+        "raw_bytes": 0,
         "contact_count": len(load_contacts()),
         "jsonl_exists": JSONL_PATH.exists(),
     }
+    _stats_cache = {"at": now, "data": data}
+    return data
+
+
+def invalidate_caches() -> None:
+    global _stats_cache
+    _stats_cache = {"at": 0.0, "data": {}}
+    _messages_cached.cache_clear()
+    _contacts_data.cache_clear()
