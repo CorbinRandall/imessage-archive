@@ -63,9 +63,11 @@
       <section id="view-schedules" class="view">
         <header class="view-header">
           <h1>Backup Schedules</h1>
+          <button id="btn-new-schedule" class="btn">+ New schedule</button>
         </header>
-        <p class="muted">Configure when each Mac should automatically back up. The Mac agent must be running.</p>
+        <p class="muted">Mac agents poll the server every 60s and run backups when a schedule is due.</p>
         <div id="schedules-list"></div>
+        <div id="schedule-editor" class="schedule-editor hidden"></div>
       </section>
     </main>
   </div>

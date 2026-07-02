@@ -66,20 +66,27 @@ export_messages() {
 
   log "Copying raw database and attachments..."
   cp "$HOME/Library/Messages/chat.db" "$LOCAL_EXPORT/raw/"
-  rsync -a "$HOME/Library/Messages/Attachments/" "$LOCAL_EXPORT/raw/Attachments/" 2>/dev/null || true
+  mkdir -p "$LOCAL_EXPORT/raw/Attachments"
+  rsync -a --partial --progress "$HOME/Library/Messages/Attachments/" "$LOCAL_EXPORT/raw/Attachments/"
+
+  log "Exporting contacts..."
+  python3 "$SCRIPT_DIR/export-contacts.py" --out "$LOCAL_EXPORT/contacts.json" 2>&1 | tee -a "$logfile" || true
 
   log "Building JSONL..."
   python3 "$SCRIPT_DIR/export-to-jsonl.py" \
     --db "$HOME/Library/Messages/chat.db" \
-    --out "$LOCAL_EXPORT/messages.jsonl" 2>&1 | tee -a "$logfile"
+    --out "$LOCAL_EXPORT/messages.jsonl" \
+    --contacts "$LOCAL_EXPORT/contacts.json" \
+    --html-dir "$LOCAL_EXPORT/html" 2>&1 | tee -a "$logfile"
 }
 
 sync_to_server() {
   report "running" "sync" "Syncing to server"
   log "Syncing to server..."
   rsync -av --delete "$LOCAL_EXPORT/html/" "$BACKUP_ROOT/html-export/"
-  rsync -av "$LOCAL_EXPORT/raw/" "$BACKUP_ROOT/raw/"
+  rsync -av --partial "$LOCAL_EXPORT/raw/" "$BACKUP_ROOT/raw/"
   rsync -av "$LOCAL_EXPORT/messages.jsonl" "$BACKUP_ROOT/messages.jsonl"
+  rsync -av "$LOCAL_EXPORT/contacts.json" "$BACKUP_ROOT/contacts.json" 2>/dev/null || true
 }
 
 trigger_reindex() {

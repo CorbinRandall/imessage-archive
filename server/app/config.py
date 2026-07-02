@@ -6,7 +6,9 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 STATE_DIR = Path(os.environ.get("STATE_DIR", "/state"))
 JSONL_PATH = DATA_DIR / "messages.jsonl"
+CONTACTS_PATH = DATA_DIR / "contacts.json"
 HTML_DIR = DATA_DIR / "html-export"
+HTML_ATTACHMENTS_DIR = HTML_DIR / "attachments"
 RAW_DIR = DATA_DIR / "raw"
 ATTACHMENTS_DIR = RAW_DIR / "Attachments"
 DB_PATH = STATE_DIR / "archive.db"

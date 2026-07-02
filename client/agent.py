@@ -82,8 +82,13 @@ def report_status(server: str, token: str, run_id: str, status: str | None = Non
     )
 
 
-def run_backup(server: str, token: str, triggered_by: str) -> None:
-    start = api_request(f"{server}/api/clients/backup/start", method="POST", token=token, body={"triggered_by": triggered_by})
+def run_backup(server: str, token: str, triggered_by: str, schedule_id: str | None = None) -> None:
+    start = api_request(
+        f"{server}/api/clients/backup/start",
+        method="POST",
+        token=token,
+        body={"triggered_by": triggered_by, "schedule_id": schedule_id},
+    )
     run_id = start["run_id"]
     script = INSTALL_DIR / "client/export-and-sync.sh"
     if not script.exists():
@@ -113,7 +118,7 @@ def poll_once(server: str, token: str) -> None:
     if hb.get("trigger_backup"):
         reason = hb.get("trigger_reason") or "schedule"
         print(f"Backup triggered ({reason})")
-        run_backup(server, token, reason)
+        run_backup(server, token, reason, hb.get("schedule_id"))
 
 
 def main() -> int:
