@@ -60,6 +60,8 @@ export_messages() {
   sleep 2
 
   log "Exporting HTML (copy-method=$COPY_METHOD)..."
+  rm -rf "$LOCAL_EXPORT/html"
+  mkdir -p "$LOCAL_EXPORT/html"
   imessage-exporter -f html -c "$COPY_METHOD" -o "$LOCAL_EXPORT/html" 2>&1 | tee -a "$logfile"
 
   log "Copying raw database and attachments..."
