@@ -4,7 +4,30 @@ from datetime import datetime
 from typing import Any
 
 from app import db
-from app.scheduler import should_run_scheduled_backup
+
+
+def should_run_scheduled_backup(
+    schedule: dict[str, Any],
+    last_run_at: float | None,
+    now: datetime | None = None,
+) -> bool:
+    if not schedule.get("enabled"):
+        return False
+    days = schedule.get("days") or []
+    if not days:
+        return False
+
+    now = now or datetime.now()
+    if now.weekday() not in days:
+        return False
+    if now.hour != schedule.get("hour", 0) or now.minute != schedule.get("minute", 0):
+        return False
+
+    if last_run_at:
+        last = datetime.fromtimestamp(last_run_at)
+        if last.date() == now.date() and last.hour == now.hour and last.minute == now.minute:
+            return False
+    return True
 
 
 def client_heartbeat(client_id: str) -> dict[str, Any]:
