@@ -7,10 +7,39 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from app.config import ATTACHMENTS_DIR, CONTACTS_PATH, DATA_DIR, HTML_ATTACHMENTS_DIR, HTML_DIR, JSONL_PATH, RAW_DIR
+from app.config import ATTACHMENTS_DIR, CONTACTS_PATH, DATA_DIR, HTML_ATTACHMENTS_DIR, HTML_DIR, JSONL_PATH, RAW_DIR, STATE_DIR
 
 _stats_cache: dict[str, Any] = {"at": 0.0, "data": {}}
 _STATS_TTL = 60.0
+
+_MEDIA_CACHE_DIR = STATE_DIR / "media-cache"
+
+
+def convert_image_for_web(source: Path) -> Path | None:
+    """Convert HEIC/TIFF to browser-friendly JPEG, cached on disk."""
+    try:
+        import hashlib
+
+        from PIL import Image
+        import pillow_heif
+
+        pillow_heif.register_heif_opener()
+    except ImportError:
+        return None
+
+    _MEDIA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha1(f"{source}:{source.stat().st_mtime_ns}".encode()).hexdigest()
+    cached = _MEDIA_CACHE_DIR / f"{key}.jpg"
+    if cached.exists():
+        return cached
+    try:
+        with Image.open(source) as img:
+            img = img.convert("RGB")
+            img.thumbnail((2048, 2048))
+            img.save(cached, "JPEG", quality=85)
+        return cached
+    except Exception:
+        return None
 
 
 def _normalize_phone(value: str) -> str:

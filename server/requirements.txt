@@ -3,3 +3,5 @@ uvicorn[standard]==0.34.0
 qdrant-client==1.13.3
 fastembed==0.6.0
 pydantic==2.11.3
+pillow==11.2.1
+pillow-heif==0.22.0

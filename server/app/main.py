@@ -149,6 +149,10 @@ def get_media(path: str) -> FileResponse:
     resolved = archive.resolve_media_path(path)
     if not resolved:
         raise HTTPException(404, "Media not found")
+    if resolved.suffix.lower() in {".heic", ".heif", ".tif", ".tiff"}:
+        converted = archive.convert_image_for_web(resolved)
+        if converted:
+            return FileResponse(converted, media_type="image/jpeg")
     media_type, _ = mimetypes.guess_type(str(resolved))
     return FileResponse(resolved, media_type=media_type or "application/octet-stream")
 
