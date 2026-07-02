@@ -177,10 +177,11 @@ def get_schedule(client_id: str) -> dict[str, Any] | None:
 
 def create_backup_run(client_id: str, triggered_by: str) -> str:
     run_id = str(uuid.uuid4())
+    now = time.time()
     with connect() as conn:
         conn.execute(
-            "INSERT INTO backup_runs (id, client_id, status, phase, message, started_at, triggered_by) VALUES (?, ?, 'running', 'starting', '', ?)",
-            (run_id, client_id, triggered_by),
+            "INSERT INTO backup_runs (id, client_id, status, phase, message, started_at, triggered_by) VALUES (?, ?, 'running', 'starting', '', ?, ?)",
+            (run_id, client_id, now, triggered_by),
         )
     return run_id
 

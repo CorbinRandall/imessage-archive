@@ -22,10 +22,8 @@ echo "Building image..."
 docker build --network=host -t imessage-archive:latest "$APP_PATH/server"
 
 echo "Starting containers..."
-docker compose -f "$APP_PATH/server/docker-compose.yml" up -d
-
-# Migrate old container name if present
 docker rm -f imessage-search 2>/dev/null || true
+docker compose -f "$APP_PATH/server/docker-compose.yml" up -d --remove-orphans
 
 HOST="${SERVER_HOST:-$(hostname -I | awk '{print $1}')}"
 echo ""
