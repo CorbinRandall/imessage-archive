@@ -80,13 +80,26 @@ export_messages() {
     --html-dir "$LOCAL_EXPORT/html" 2>&1 | tee -a "$logfile"
 }
 
+rsync_retry() {
+  # SMB mounts occasionally drop mid-transfer; remount and resume up to 3 times.
+  local attempt
+  for attempt in 1 2 3; do
+    if rsync -a --partial "$@"; then return 0; fi
+    log "rsync failed (attempt $attempt), remounting and retrying..."
+    umount "$MOUNT_POINT" 2>/dev/null || true
+    sleep 5
+    ensure_mount
+  done
+  rsync -a --partial "$@"
+}
+
 sync_to_server() {
   report "running" "sync" "Syncing to server"
   log "Syncing to server..."
-  rsync -av --delete "$LOCAL_EXPORT/html/" "$BACKUP_ROOT/html-export/"
-  rsync -av --partial "$LOCAL_EXPORT/raw/" "$BACKUP_ROOT/raw/"
-  rsync -av "$LOCAL_EXPORT/messages.jsonl" "$BACKUP_ROOT/messages.jsonl"
-  rsync -av "$LOCAL_EXPORT/contacts.json" "$BACKUP_ROOT/contacts.json" 2>/dev/null || true
+  rsync_retry --delete "$LOCAL_EXPORT/html/" "$BACKUP_ROOT/html-export/"
+  rsync_retry "$LOCAL_EXPORT/raw/" "$BACKUP_ROOT/raw/"
+  rsync_retry "$LOCAL_EXPORT/messages.jsonl" "$BACKUP_ROOT/messages.jsonl"
+  rsync_retry "$LOCAL_EXPORT/contacts.json" "$BACKUP_ROOT/contacts.json" 2>/dev/null || true
 }
 
 trigger_reindex() {
