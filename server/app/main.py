@@ -122,6 +122,15 @@ def get_chat_messages(chat_id: int, limit: int = Query(500, le=2000), offset: in
     return {"chat_id": chat_id, "messages": archive.chat_messages(chat_id, limit, offset)}
 
 
+@app.get("/api/media-gallery")
+def media_gallery(
+    kind: str = Query("all"),
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+) -> dict[str, Any]:
+    return archive.media_gallery(kind, limit, offset)
+
+
 @app.get("/api/html")
 def list_html() -> dict[str, Any]:
     return {"exports": archive.list_html_exports()}

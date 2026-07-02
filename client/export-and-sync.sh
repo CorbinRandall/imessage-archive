@@ -17,7 +17,7 @@ LOCAL_EXPORT="${LOCAL_EXPORT:-$HOME/imessage-export}"
 BACKUP_ROOT="$MOUNT_POINT/imessage-backup"
 SERVER_URL="${SERVER_URL:-${SEARCH_API:-http://$UNRAID_HOST:8095}}"
 SEARCH_API="${SEARCH_API:-$SERVER_URL}"
-COPY_METHOD="${COPY_METHOD:-clone}"
+COPY_METHOD="${COPY_METHOD:-full}"  # full converts HEIC->JPEG, CAF->MP4 for browser playback
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 

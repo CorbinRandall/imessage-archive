@@ -123,6 +123,41 @@ def resolve_media_path(relative: str) -> Path | None:
     return None
 
 
+def media_gallery(kind: str = "all", limit: int = 200, offset: int = 0) -> dict[str, Any]:
+    """All media attachments across chats, newest first."""
+    items: list[dict[str, Any]] = []
+    for msg in load_messages():
+        for att in msg.get("attachments") or []:
+            mime = att.get("mime_type") or ""
+            name = (att.get("name") or "").lower()
+            if mime.startswith("image/gif") or name.endswith(".gif"):
+                media_kind = "gif"
+            elif mime.startswith("image/"):
+                media_kind = "photo"
+            elif mime.startswith("video/"):
+                media_kind = "video"
+            elif mime.startswith("audio/"):
+                media_kind = "audio"
+            else:
+                continue
+            if kind != "all" and media_kind != kind:
+                continue
+            items.append({
+                "kind": media_kind,
+                "name": att.get("name"),
+                "mime_type": mime,
+                "path": att.get("path"),
+                "paths": att.get("paths") or [att.get("path")],
+                "chat": msg.get("chat"),
+                "chat_id": msg.get("chat_id"),
+                "sender": msg.get("sender"),
+                "date": msg.get("date"),
+            })
+    items.sort(key=lambda i: i.get("date") or "", reverse=True)
+    total = len(items)
+    return {"total": total, "items": items[offset : offset + limit]}
+
+
 def list_html_exports() -> list[dict[str, str]]:
     if not HTML_DIR.exists():
         return []

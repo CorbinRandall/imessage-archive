@@ -12,7 +12,8 @@
       <div class="brand">iMessage Archive</div>
       <nav>
         <button class="nav active" data-view="dashboard">Dashboard</button>
-        <button class="nav" data-view="browse">Browse</button>
+        <button class="nav" data-view="browse">Messages</button>
+        <button class="nav" data-view="media">Media</button>
         <button class="nav" data-view="search">Search</button>
         <button class="nav" data-view="schedules">Schedules</button>
       </nav>
@@ -33,17 +34,38 @@
         <div id="runs-list" class="runs-list"></div>
       </section>
 
-      <!-- Browse -->
+      <!-- Messages (browse) -->
       <section id="view-browse" class="view">
-        <header class="view-header">
-          <h1>Browse</h1>
-          <input id="chat-filter" type="search" placeholder="Filter conversations..." />
-        </header>
         <div class="browse-layout">
-          <div id="chat-list" class="chat-list"></div>
-          <div id="chat-detail" class="chat-detail">
-            <p class="muted">Select a conversation</p>
+          <div class="chat-pane">
+            <input id="chat-filter" type="search" placeholder="Search conversations" />
+            <div id="chat-list" class="chat-list"></div>
           </div>
+          <div class="detail-pane">
+            <div id="chat-header" class="chat-header"></div>
+            <div id="chat-detail" class="chat-detail">
+              <p class="muted center">Select a conversation</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Media -->
+      <section id="view-media" class="view">
+        <header class="view-header">
+          <h1>Media</h1>
+          <div class="media-filters">
+            <button class="chip active" data-kind="all">All</button>
+            <button class="chip" data-kind="photo">Photos</button>
+            <button class="chip" data-kind="video">Videos</button>
+            <button class="chip" data-kind="gif">GIFs</button>
+            <button class="chip" data-kind="audio">Audio</button>
+          </div>
+        </header>
+        <div id="media-count" class="muted"></div>
+        <div id="media-grid" class="media-grid"></div>
+        <div id="media-more" class="center" style="padding:1rem">
+          <button class="btn secondary hidden" id="btn-media-more">Load more</button>
         </div>
       </section>
 
@@ -71,6 +93,14 @@
       </section>
     </main>
   </div>
+
+  <!-- Lightbox -->
+  <div id="lightbox" class="lightbox hidden">
+    <button class="lightbox-close" id="lightbox-close">&times;</button>
+    <div id="lightbox-content"></div>
+    <div id="lightbox-caption" class="lightbox-caption"></div>
+  </div>
+
   <script src="/static/app.js"></script>
 </body>
 </html>

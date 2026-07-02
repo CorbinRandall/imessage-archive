@@ -21,17 +21,36 @@ function fmtTime(ts) {
   return new Date(ts * 1000).toLocaleString();
 }
 
+function fmtMsgTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function fmtDay(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
+
 function isOnline(lastSeen) {
   return lastSeen && (Date.now() / 1000 - lastSeen) < 120;
 }
 
-function formatScheduleDays(days) {
-  if (!days?.length) return 'No days';
-  return days.map(d => DAY_LABELS[d]).join(', ');
+function initials(name) {
+  if (!name) return '?';
+  const parts = name.trim().split(/[\s,]+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
 }
 
-function formatScheduleTime(h, m) {
-  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+function mediaUrl(att) {
+  const p = (att.paths?.length ? att.paths[0] : att.path) || '';
+  return `/api/media/${encodeURI(p)}`;
+}
+
+function mediaFallbacks(att) {
+  return (att.paths || [att.path]).filter(Boolean).map(p => `/api/media/${encodeURI(p)}`);
 }
 
 // Navigation
@@ -41,11 +60,12 @@ $$('.nav').forEach(btn => btn.onclick = () => {
   btn.classList.add('active');
   $(`#view-${btn.dataset.view}`).classList.add('active');
   if (btn.dataset.view === 'browse') loadChats();
+  if (btn.dataset.view === 'media') loadMedia(true);
   if (btn.dataset.view === 'schedules') loadSchedules();
   if (btn.dataset.view === 'dashboard') loadDashboard();
 });
 
-// Dashboard
+// ===== Dashboard =====
 async function loadDashboard() {
   const [stats, clients] = await Promise.all([api('/api/stats'), api('/api/clients')]);
   const a = stats.archive || {};
@@ -63,7 +83,6 @@ async function loadDashboard() {
         <div>
           <span class="status-dot ${isOnline(c.last_seen_at) ? 'online' : 'offline'}"></span>
           <strong>${esc(c.name)}</strong>
-          <span class="muted"> · ${esc(c.hostname)}</span>
         </div>
         <button class="btn small" onclick="triggerBackup('${c.id}')">Backup now</button>
       </div>
@@ -95,33 +114,37 @@ $('#btn-reindex').onclick = async () => {
   alert('Reindex started');
 };
 
-// Browse
+// ===== Messages (iMessage style) =====
 let allChats = [];
+let currentChat = null;
+
 async function loadChats() {
-  $('#chat-list').innerHTML = '<p class="muted">Loading conversations...</p>';
-  $('#chat-detail').innerHTML = '<p class="muted">Select a conversation</p>';
+  $('#chat-list').innerHTML = '<p class="muted center" style="padding:1rem">Loading...</p>';
   try {
     const data = await api('/api/chats');
     allChats = data.chats || [];
     if (!allChats.length) {
-      $('#chat-list').innerHTML = '<p class="muted">No conversations yet. Run <strong>imessage-backup</strong> on your Mac.</p>';
+      $('#chat-list').innerHTML = '<p class="muted center" style="padding:1rem">No conversations yet.</p>';
       return;
     }
     renderChatList(allChats);
   } catch (err) {
-    $('#chat-list').innerHTML = `<p class="muted">Error loading chats: ${esc(err.message)}</p>`;
+    $('#chat-list').innerHTML = `<p class="muted center" style="padding:1rem">Error: ${esc(err.message)}</p>`;
   }
 }
 
 function renderChatList(chats) {
   if (!chats.length) {
-    $('#chat-list').innerHTML = '<p class="muted">No matching conversations.</p>';
+    $('#chat-list').innerHTML = '<p class="muted center" style="padding:1rem">No matches.</p>';
     return;
   }
   $('#chat-list').innerHTML = chats.map(c => `
-    <div class="chat-item" data-id="${c.chat_id}" onclick="openChat(${c.chat_id})">
-      <div class="title">${esc(c.chat)}</div>
-      <div class="meta">${c.message_count} messages · ${esc((c.last_date || '').slice(0, 10))}</div>
+    <div class="chat-item ${currentChat === c.chat_id ? 'active' : ''}" data-id="${c.chat_id}" onclick="openChat(${c.chat_id})">
+      <div class="chat-avatar">${esc(initials(c.chat))}</div>
+      <div class="chat-item-body">
+        <div class="title">${esc(c.chat)}</div>
+        <div class="meta">${c.message_count} messages · ${esc((c.last_date || '').slice(0, 10))}</div>
+      </div>
     </div>
   `).join('');
 }
@@ -131,36 +154,154 @@ $('#chat-filter').oninput = (e) => {
   renderChatList(allChats.filter(c => (c.chat || '').toLowerCase().includes(q)));
 };
 
-function renderMedia(attachments) {
+function renderBubbleMedia(attachments) {
   return (attachments || []).map(a => {
-    const paths = a.paths?.length ? a.paths : [a.path];
-    const url = `/api/media/${encodeURI(paths[0])}`;
+    const urls = mediaFallbacks(a);
+    const url = urls[0];
     const mime = a.mime_type || '';
-    if (mime.startsWith('image/') || /\.(jpe?g|png|gif|heic|webp)$/i.test(a.name || ''))
-      return `<img src="${url}" alt="${esc(a.name)}" loading="lazy" onerror="this.style.display='none'" />`;
-    if (mime.startsWith('video/') || /\.(mp4|mov)$/i.test(a.name || ''))
-      return `<video src="${url}" controls preload="metadata"></video>`;
-    if (mime.startsWith('audio/') || /\.(m4a|caf|mp3)$/i.test(a.name || ''))
-      return `<audio src="${url}" controls></audio>`;
-    return `<a href="${url}" target="_blank">${esc(a.name || 'Download')}</a>`;
+    const name = a.name || '';
+    const fallback = urls[1] ? `onerror="if(this.src!=='${urls[1]}'){this.src='${urls[1]}';}else{this.closest('.msg-media')?.remove();}"` : `onerror="this.closest('.msg-media')?.remove()"`;
+    if (mime.startsWith('image/') || /\.(jpe?g|png|gif|heic|webp)$/i.test(name))
+      return `<div class="msg-media" onclick="openLightbox('${url}','image','${esc(name)}')"><img src="${url}" alt="${esc(name)}" loading="lazy" ${fallback} /></div>`;
+    if (mime.startsWith('video/') || /\.(mp4|mov|m4v)$/i.test(name))
+      return `<div class="msg-media"><video src="${url}" controls preload="metadata"></video></div>`;
+    if (mime.startsWith('audio/') || /\.(m4a|caf|mp3|aac|wav)$/i.test(name))
+      return `<audio src="${url}" controls preload="none"></audio>`;
+    return `<a class="file-link" href="${url}" target="_blank">&#128206; ${esc(name || 'Attachment')}</a>`;
   }).join('');
 }
 
+function renderReactions(reactions) {
+  if (!reactions?.length) return '';
+  const shown = reactions.slice(0, 6);
+  return `<div class="reactions">${shown.map(r =>
+    `<span class="reaction-badge" title="${esc(r.sender)}">${esc(r.emoji)}</span>`
+  ).join('')}${reactions.length > 6 ? `<span class="reaction-badge">+${reactions.length - 6}</span>` : ''}</div>`;
+}
+
 window.openChat = async (chatId) => {
+  currentChat = chatId;
   $$('.chat-item').forEach(el => el.classList.toggle('active', +el.dataset.id === chatId));
-  const data = await api(`/api/chats/${chatId}/messages?limit=2000`);
+  const chatInfo = allChats.find(c => c.chat_id === chatId);
+  $('#chat-header').innerHTML = chatInfo ? `
+    ${esc(chatInfo.chat)}
+    <div class="sub">${esc((chatInfo.participants || []).join(', '))}</div>
+  ` : '';
   const detail = $('#chat-detail');
-  detail.innerHTML = (data.messages || []).map(m => `
-    <div class="msg ${m.is_from_me ? 'me' : ''}">
-      <div class="meta">${esc(m.sender)} · ${esc((m.date || '').replace('T', ' ').slice(0, 19))}</div>
-      ${m.text ? `<div class="text">${esc(m.text)}</div>` : ''}
-      ${renderMedia(m.attachments)}
-    </div>
-  `).join('') || '<p class="muted">No messages</p>';
+  detail.innerHTML = '<p class="muted center">Loading...</p>';
+
+  const data = await api(`/api/chats/${chatId}/messages?limit=2000`);
+  const msgs = data.messages || [];
+  if (!msgs.length) {
+    detail.innerHTML = '<p class="muted center">No messages</p>';
+    return;
+  }
+
+  let html = '';
+  let lastDay = '';
+  let lastSender = null;
+  for (const m of msgs) {
+    const day = (m.date || '').slice(0, 10);
+    if (day !== lastDay) {
+      html += `<div class="day-divider">${esc(fmtDay(m.date))}</div>`;
+      lastDay = day;
+      lastSender = null;
+    }
+    const side = m.is_from_me ? 'me' : 'them';
+    const senderChanged = m.sender !== lastSender;
+    const showSender = m.is_group && !m.is_from_me && senderChanged;
+    const isSms = (m.service || '').toLowerCase() === 'sms';
+    lastSender = m.sender;
+
+    html += `<div class="msg-row ${side} ${senderChanged ? 'gap' : ''}">`;
+    if (showSender) html += `<div class="msg-sender">${esc(m.sender)}</div>`;
+    if (m.text) {
+      html += `<div class="bubble ${isSms ? 'sms' : ''}">${esc(m.text)}${m.edited ? '<span class="edited-tag">(edited)</span>' : ''}</div>`;
+    }
+    html += renderBubbleMedia(m.attachments);
+    html += renderReactions(m.reactions);
+    html += `</div>`;
+  }
+  detail.innerHTML = html;
   detail.scrollTop = detail.scrollHeight;
 };
 
-// Search
+// ===== Media tab =====
+let mediaKind = 'all';
+let mediaOffset = 0;
+let mediaTotal = 0;
+const MEDIA_PAGE = 100;
+
+$$('.media-filters .chip').forEach(chip => chip.onclick = () => {
+  $$('.media-filters .chip').forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+  mediaKind = chip.dataset.kind;
+  loadMedia(true);
+});
+
+async function loadMedia(reset = false) {
+  if (reset) {
+    mediaOffset = 0;
+    $('#media-grid').innerHTML = '<p class="muted">Loading media...</p>';
+  }
+  const data = await api(`/api/media-gallery?kind=${mediaKind}&limit=${MEDIA_PAGE}&offset=${mediaOffset}`);
+  mediaTotal = data.total;
+  $('#media-count').textContent = `${data.total} items`;
+
+  const cells = (data.items || []).map(item => {
+    const urls = mediaFallbacks(item);
+    const url = urls[0];
+    const caption = `${item.chat || ''} · ${(item.date || '').slice(0, 10)}`;
+    const fallback = urls[1] ? `onerror="if(this.src!=='${urls[1]}'){this.src='${urls[1]}';}else{this.closest('.media-cell')?.remove();}"` : `onerror="this.closest('.media-cell')?.remove()"`;
+    if (item.kind === 'video')
+      return `<div class="media-cell" onclick="openLightbox('${url}','video','${esc(caption)}')">
+        <video src="${url}#t=0.5" preload="metadata" muted></video>
+        <span class="badge">&#9654; video</span>
+        <div class="cell-meta">${esc(caption)}</div>
+      </div>`;
+    if (item.kind === 'audio')
+      return `<div class="media-cell audio-cell">
+        <div>&#127911;</div>
+        <audio src="${url}" controls preload="none" style="width:100%"></audio>
+        <div>${esc(caption)}</div>
+      </div>`;
+    return `<div class="media-cell" onclick="openLightbox('${url}','image','${esc(caption)}')">
+      <img src="${url}" loading="lazy" ${fallback} />
+      ${item.kind === 'gif' ? '<span class="badge">GIF</span>' : ''}
+      <div class="cell-meta">${esc(caption)}</div>
+    </div>`;
+  }).join('');
+
+  if (reset) $('#media-grid').innerHTML = cells || '<p class="muted">No media found. Run a backup first.</p>';
+  else $('#media-grid').insertAdjacentHTML('beforeend', cells);
+
+  mediaOffset += (data.items || []).length;
+  $('#btn-media-more').classList.toggle('hidden', mediaOffset >= mediaTotal);
+}
+
+$('#btn-media-more').onclick = () => loadMedia(false);
+
+// ===== Lightbox =====
+window.openLightbox = (url, type, caption) => {
+  const content = $('#lightbox-content');
+  content.innerHTML = type === 'video'
+    ? `<video src="${url}" controls autoplay></video>`
+    : `<img src="${url}" />`;
+  $('#lightbox-caption').textContent = caption || '';
+  $('#lightbox').classList.remove('hidden');
+};
+$('#lightbox-close').onclick = () => {
+  $('#lightbox').classList.add('hidden');
+  $('#lightbox-content').innerHTML = '';
+};
+$('#lightbox').onclick = (e) => {
+  if (e.target.id === 'lightbox') $('#lightbox-close').click();
+};
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !$('#lightbox').classList.contains('hidden')) $('#lightbox-close').click();
+});
+
+// ===== Search =====
 async function runSearch() {
   const q = $('#search-q').value.trim();
   if (!q) return;
@@ -177,7 +318,7 @@ async function runSearch() {
 $('#btn-search').onclick = runSearch;
 $('#search-q').onkeydown = e => { if (e.key === 'Enter') runSearch(); };
 
-// Schedules CRUD
+// ===== Schedules CRUD =====
 let allClients = [];
 let allSchedules = [];
 
@@ -190,6 +331,15 @@ async function loadSchedules() {
   allClients = clientData.clients || [];
   renderSchedulesTable();
   $('#schedule-editor').classList.add('hidden');
+}
+
+function formatScheduleDays(days) {
+  if (!days?.length) return 'No days';
+  return days.map(d => DAY_LABELS[d]).join(', ');
+}
+
+function formatScheduleTime(h, m) {
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
 }
 
 function renderSchedulesTable() {
@@ -305,4 +455,6 @@ window.deleteSchedule = async (id) => {
 };
 
 loadDashboard();
-setInterval(loadDashboard, 15000);
+setInterval(() => {
+  if ($('#view-dashboard').classList.contains('active')) loadDashboard();
+}, 15000);
