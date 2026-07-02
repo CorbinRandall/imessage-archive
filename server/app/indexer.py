@@ -15,12 +15,7 @@ from qdrant_client.http import models as qmodels
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
-JSONL_PATH = DATA_DIR / "messages.jsonl"
-QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333")
-COLLECTION = os.environ.get("COLLECTION", "imessages")
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
-BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "64"))
+from app.config import BATCH_SIZE, COLLECTION, DATA_DIR, EMBED_MODEL, JSONL_PATH, QDRANT_URL
 
 _index_lock = threading.Lock()
 _index_state: dict[str, Any] = {

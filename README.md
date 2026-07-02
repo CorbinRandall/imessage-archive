@@ -1,149 +1,109 @@
 # iMessage Archive
 
-Back up your iMessage history from a Mac to a home server (Unraid), browse conversations as HTML, and search them with semantic vector search.
+A self-hosted server app for backing up, browsing, and searching your iMessage history. Runs on Unraid (Docker) with Mac clients that sync on a schedule you control from the web UI.
+
+**Live UI:** `http://<your-server>:8095`
+
+## Features
+
+- **Web dashboard** — backup status, Mac client health, manual triggers
+- **Browse conversations** — read messages with inline photos, videos, and audio
+- **Semantic search** — vector search across all message text
+- **Server-managed schedules** — set weekday/time backups per Mac from the GUI
+- **Mac agent** — lightweight background process polls the server and runs backups automatically
 
 ## Architecture
 
 ```
-Mac (client)                          Unraid (server)
-┌─────────────────────┐              ┌──────────────────────────────────┐
-│  Messages/chat.db   │   rsync/SMB  │  /mnt/user/Misc/imessage-backup  │
-│  imessage-exporter  │ ──────────►  │    messages.jsonl  (search)      │
-│  export-to-jsonl    │              │    html-export/    (browse)      │
-└─────────────────────┘              │    raw/            (chat.db)     │
-                                     │                                  │
-                                     │  Docker:                         │
-                                     │    Qdrant (vector DB)            │
-                                     │    imessage-search (FastAPI UI)  │
-                                     └──────────────────────────────────┘
+┌──────────────── Mac ─────────────────┐
+│  agent.py (launchd, polls server)    │
+│  export-and-sync.sh                    │
+│    → imessage-exporter (HTML+media)    │
+│    → export-to-jsonl.py                │
+│    → rsync to Unraid SMB               │
+└────────────────┬───────────────────────┘
+                 │
+┌────────────────▼───────────────────────┐
+│  Unraid Docker: imessage-archive       │
+│    FastAPI + SQLite (schedules/clients)│
+│    Qdrant (vector search)              │
+│    /mnt/user/Misc/imessage-backup/     │
+└────────────────────────────────────────┘
 ```
 
 ## Quick start
 
-### 1. Server (Unraid)
-
-SSH into your server and run:
+### Server (Unraid)
 
 ```bash
+ssh root@192.168.1.200
 curl -fsSL https://raw.githubusercontent.com/CorbinRandall/imessage-archive/main/scripts/bootstrap-server.sh | bash
 ```
 
-Or manually:
+Open **http://192.168.1.200:8095**
 
-```bash
-git clone https://github.com/CorbinRandall/imessage-archive.git /mnt/user/appdata/imessage-archive
-cp /mnt/user/appdata/imessage-archive/config/env.example /mnt/user/appdata/imessage-archive/.env
-# edit .env if needed
-/mnt/user/appdata/imessage-archive/scripts/install-server.sh
-```
-
-Open **http://192.168.1.200:8095** for the search UI.
-
-### 2. Client (Mac)
+### Mac client
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/CorbinRandall/imessage-archive/main/scripts/install-client.sh | bash
 ```
 
-Then grant **Full Disk Access** to Terminal:
+1. Grant **Full Disk Access** to Terminal (System Settings → Privacy & Security)
+2. Your Mac appears on the dashboard within ~60 seconds
+3. Go to **Schedules** tab → pick weekdays + time → Save
 
-> System Settings → Privacy & Security → Full Disk Access → add Terminal
+## Using the GUI
 
-Run your first backup:
+| Tab | What it does |
+|-----|----------------|
+| **Dashboard** | Stats, connected Macs, backup now button, recent runs |
+| **Browse** | Pick a conversation, view messages and media inline |
+| **Search** | Semantic search ("dentist appointment", "wifi password") |
+| **Schedules** | Per-Mac backup schedule (weekdays + time) |
+
+## Manual backup
 
 ```bash
 imessage-backup
 ```
 
-This exports messages, syncs to the server, and triggers a vector reindex.
-
-## What gets backed up
-
-| Output | Location on server | Purpose |
-|--------|-------------------|---------|
-| `messages.jsonl` | `imessage-backup/messages.jsonl` | Vector search index |
-| `html-export/` | `imessage-backup/html-export/` | Browse conversations in a browser |
-| `raw/chat.db` | `imessage-backup/raw/` | Raw database for re-export |
-
-## Search
-
-The search UI at `http://<server>:8095` supports semantic queries:
-
-- "dentist appointment next week"
-- "wifi password"
-- "what did we decide about the trip"
-
-Results are ranked by meaning, not just keyword match.
-
-API endpoints:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Search web UI |
-| `/search?q=...` | GET | JSON search results |
-| `/index` | POST | Rebuild vector index |
-| `/health` | GET | Health check |
-| `/api/stats` | GET | Index status |
+Or click **Backup now** on the dashboard for a specific Mac.
 
 ## Configuration
 
-Copy `config/env.example` to:
-
-- **Server:** `/mnt/user/appdata/imessage-archive/.env`
-- **Mac:** `~/.config/imessage-archive.env`
-
-Key settings:
+**Server** — `/mnt/user/appdata/imessage-archive/.env`  
+**Mac** — `~/.config/imessage-archive.env`
 
 ```bash
-UNRAID_HOST=192.168.1.200      # server IP
-UNRAID_SHARE=Misc              # SMB share name
-SEARCH_API=http://192.168.1.200:8095
-COPY_METHOD=clone              # clone (fast) | full (converts media) | disabled
+SERVER_URL=http://192.168.1.200:8095
+COPY_METHOD=clone    # clone (fast) | full (converts media) | disabled
 ```
-
-## Automation
-
-The client installer sets up a monthly backup (1st of each month, 3 AM) via launchd.
-
-To change the schedule, edit `~/Library/LaunchAgents/com.imessage-archive.backup.plist`.
 
 ## Updating
 
-**Server:**
-
 ```bash
-cd /mnt/user/appdata/imessage-archive && git pull
-./scripts/install-server.sh
-```
+# Server
+cd /mnt/user/appdata/imessage-archive && git pull && ./scripts/install-server.sh
 
-**Client:**
-
-```bash
+# Mac
 ~/.local/imessage-archive/scripts/install-client.sh
 ```
 
+## API
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/chats` | List conversations |
+| `GET /api/chats/{id}/messages` | Messages + attachment metadata |
+| `GET /api/media/{path}` | Serve photo/video/audio files |
+| `GET /api/search?q=...` | Vector search |
+| `POST /api/clients/{id}/backup/trigger` | Queue backup for Mac |
+| `PUT /api/clients/{id}/schedule` | Set backup schedule |
+
 ## Requirements
 
-### Mac
-- macOS with Messages signed into your Apple ID
-- Homebrew
-- [imessage-exporter](https://github.com/ReagentX/imessage-exporter)
-- Full Disk Access for Terminal
-
-### Server
-- Unraid (or any Linux host with Docker)
-- SMB share for backup data
-- ~2 GB RAM for the embedding model
-
-## Troubleshooting
-
-**"Unable to read chat database"** — Grant Full Disk Access to Terminal.
-
-**Search returns no results** — Run `imessage-backup` on your Mac, then click **Reindex** in the UI or `curl -X POST http://<server>:8095/index`.
-
-**Docker build fails on Unraid** — The install script uses `--network=host` for DNS. If it still fails, check your router DNS.
-
-**Missing attachments in export** — Some attachments only exist on your phone. Make an encrypted iPhone backup and export from that separately with `imessage-exporter -p <backup-path> -a iOS`.
+- **Mac:** macOS, Homebrew, imessage-exporter, Full Disk Access
+- **Server:** Unraid or Linux + Docker, SMB share, ~2 GB RAM
 
 ## License
 

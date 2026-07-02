@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 
 ENV DATA_DIR=/data
+ENV STATE_DIR=/state
 ENV QDRANT_URL=http://qdrant:6333
 ENV COLLECTION=imessages
 ENV EMBED_MODEL=BAAI/bge-small-en-v1.5

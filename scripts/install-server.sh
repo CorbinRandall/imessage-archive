@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# Deploy or update the iMessage archive stack on Unraid.
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-/mnt/user/appdata/imessage-archive}"
 ENV_FILE="${ENV_FILE:-$REPO_DIR/.env}"
 
 if [[ -f "$ENV_FILE" ]]; then
-  # shellcheck disable=SC1090
+  # shellcheck disable=source=/dev/null
   source "$ENV_FILE"
 fi
 
@@ -16,16 +15,21 @@ SEARCH_PORT="${SEARCH_PORT:-8095}"
 
 export APP_PATH DATA_PATH SEARCH_PORT
 
-mkdir -p "$DATA_PATH"/{html-export,raw,logs} "$APP_PATH/qdrant"
+mkdir -p "$DATA_PATH"/{html-export,raw,logs} "$APP_PATH"/{qdrant,state}
+chmod -R 777 "$DATA_PATH" 2>/dev/null || true
 
-echo "Building search image..."
-docker build --network=host -t imessage-search:latest "$APP_PATH/server"
+echo "Building image..."
+docker build --network=host -t imessage-archive:latest "$APP_PATH/server"
 
 echo "Starting containers..."
 docker compose -f "$APP_PATH/server/docker-compose.yml" up -d
 
+# Migrate old container name if present
+docker rm -f imessage-search 2>/dev/null || true
+
+HOST="${SERVER_HOST:-$(hostname -I | awk '{print $1}')}"
 echo ""
 echo "iMessage Archive is running."
-echo "  Search UI:  http://${SERVER_HOST:-$(hostname -I | awk '{print $1}')}:$SEARCH_PORT"
+echo "  Web UI:     http://${HOST}:${SEARCH_PORT}"
 echo "  Data path:  $DATA_PATH"
-echo "  Health:     curl http://localhost:$SEARCH_PORT/health"
+echo "  State DB:   $APP_PATH/state"

@@ -3,133 +3,72 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>iMessage Search</title>
-  <style>
-    :root {
-      color-scheme: light dark;
-      --bg: #0f1115;
-      --panel: #171a21;
-      --text: #e8eaed;
-      --muted: #9aa0a6;
-      --accent: #4c8bf5;
-      --border: #2a2f3a;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-    }
-    .wrap { max-width: 900px; margin: 0 auto; padding: 2rem 1rem 4rem; }
-    h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
-    .sub { color: var(--muted); margin-bottom: 1.5rem; }
-    .search-row { display: flex; gap: .75rem; margin-bottom: 1rem; }
-    input[type="search"] {
-      flex: 1;
-      padding: .85rem 1rem;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      background: var(--panel);
-      color: var(--text);
-      font-size: 1rem;
-    }
-    button {
-      padding: .85rem 1.1rem;
-      border-radius: 10px;
-      border: none;
-      background: var(--accent);
-      color: white;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    button.secondary { background: #303642; }
-    .meta { color: var(--muted); font-size: .9rem; margin-bottom: 1rem; }
-    .result {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1rem;
-      margin-bottom: .75rem;
-    }
-    .result-head { display: flex; justify-content: space-between; gap: 1rem; margin-bottom: .5rem; }
-    .chat { font-weight: 600; }
-    .score { color: var(--muted); font-size: .85rem; white-space: nowrap; }
-    .text { line-height: 1.45; white-space: pre-wrap; }
-    .pill {
-      display: inline-block;
-      font-size: .75rem;
-      color: var(--muted);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: .1rem .5rem;
-      margin-left: .4rem;
-    }
-  </style>
+  <title>iMessage Archive</title>
+  <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <div class="wrap">
-    <h1>iMessage Vector Search</h1>
-    <p class="sub">Semantic search across your backed-up messages on Unraid.</p>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">iMessage Archive</div>
+      <nav>
+        <button class="nav active" data-view="dashboard">Dashboard</button>
+        <button class="nav" data-view="browse">Browse</button>
+        <button class="nav" data-view="search">Search</button>
+        <button class="nav" data-view="schedules">Schedules</button>
+      </nav>
+      <div class="sidebar-stats" id="sidebar-stats"></div>
+    </aside>
 
-    <div class="search-row">
-      <input id="q" type="search" placeholder="e.g. dentist appointment, wifi password, birthday plans..." autofocus />
-      <button id="go">Search</button>
-      <button id="reindex" class="secondary" title="Rebuild vector index">Reindex</button>
-    </div>
-    <div class="meta" id="stats">Loading stats...</div>
-    <div id="results"></div>
-  </div>
+    <main class="main">
+      <!-- Dashboard -->
+      <section id="view-dashboard" class="view active">
+        <header class="view-header">
+          <h1>Dashboard</h1>
+          <button id="btn-reindex" class="btn secondary">Reindex search</button>
+        </header>
+        <div class="cards" id="stat-cards"></div>
+        <h2>Mac Clients</h2>
+        <div id="clients-list" class="clients-list"></div>
+        <h2>Recent Backups</h2>
+        <div id="runs-list" class="runs-list"></div>
+      </section>
 
-  <script>
-    const q = document.getElementById('q');
-    const results = document.getElementById('results');
-    const stats = document.getElementById('stats');
-
-    async function loadStats() {
-      const res = await fetch('/api/stats');
-      const data = await res.json();
-      const idx = data.index || {};
-      stats.textContent = `${data.messages_in_jsonl || 0} messages in backup · indexed: ${idx.indexed || 0}${idx.running ? ' (indexing...)' : ''}`;
-    }
-
-    async function runSearch() {
-      const query = q.value.trim();
-      if (!query) return;
-      results.innerHTML = '<div class="meta">Searching...</div>';
-      const res = await fetch(`/search?${new URLSearchParams({ q: query, limit: '25' })}`);
-      const data = await res.json();
-      if (!data.results?.length) {
-        results.innerHTML = '<div class="meta">No results. Try different wording or run Reindex after a new backup.</div>';
-        return;
-      }
-      results.innerHTML = data.results.map(r => `
-        <article class="result">
-          <div class="result-head">
-            <div class="chat">${escapeHtml(r.chat || 'Unknown')}${r.has_attachments ? '<span class="pill">attachment</span>' : ''}</div>
-            <div class="score">${(r.score * 100).toFixed(1)}% · ${escapeHtml(r.sender || '')} · ${escapeHtml(r.date || '')}</div>
+      <!-- Browse -->
+      <section id="view-browse" class="view">
+        <header class="view-header">
+          <h1>Browse</h1>
+          <input id="chat-filter" type="search" placeholder="Filter conversations..." />
+        </header>
+        <div class="browse-layout">
+          <div id="chat-list" class="chat-list"></div>
+          <div id="chat-detail" class="chat-detail">
+            <p class="muted">Select a conversation</p>
           </div>
-          <div class="text">${escapeHtml(r.text || '')}</div>
-        </article>
-      `).join('');
-    }
+        </div>
+      </section>
 
-    async function reindex() {
-      stats.textContent = 'Starting reindex...';
-      await fetch('/index', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"full":true}' });
-      setTimeout(loadStats, 1500);
-    }
+      <!-- Search -->
+      <section id="view-search" class="view">
+        <header class="view-header">
+          <h1>Semantic Search</h1>
+        </header>
+        <div class="search-row">
+          <input id="search-q" type="search" placeholder="e.g. dentist appointment, wifi password..." autofocus />
+          <button id="btn-search" class="btn">Search</button>
+        </div>
+        <div id="search-results"></div>
+      </section>
 
-    function escapeHtml(s) {
-      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    }
-
-    document.getElementById('go').onclick = runSearch;
-    document.getElementById('reindex').onclick = reindex;
-    q.addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
-    loadStats();
-    setInterval(loadStats, 10000);
-  </script>
+      <!-- Schedules -->
+      <section id="view-schedules" class="view">
+        <header class="view-header">
+          <h1>Backup Schedules</h1>
+        </header>
+        <p class="muted">Configure when each Mac should automatically back up. The Mac agent must be running.</p>
+        <div id="schedules-list"></div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
 </body>
 </html>

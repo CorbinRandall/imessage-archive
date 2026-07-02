@@ -8,11 +8,11 @@ services:
     ports:
       - "6333:6333"
     networks:
-      - imessage-search
+      - imessage-archive
 
-  imessage-search:
-    image: imessage-search:latest
-    container_name: imessage-search
+  imessage-archive:
+    image: imessage-archive:latest
+    container_name: imessage-archive
     build:
       context: ${APP_PATH:-/mnt/user/appdata/imessage-archive}/server
     restart: unless-stopped
@@ -20,16 +20,18 @@ services:
       - qdrant
     environment:
       DATA_DIR: /data
+      STATE_DIR: /state
       QDRANT_URL: http://qdrant:6333
       COLLECTION: imessages
       EMBED_MODEL: BAAI/bge-small-en-v1.5
     volumes:
       - ${DATA_PATH:-/mnt/user/Misc/imessage-backup}:/data:ro
+      - ${APP_PATH:-/mnt/user/appdata/imessage-archive}/state:/state
     ports:
       - "${SEARCH_PORT:-8095}:8095"
     networks:
-      - imessage-search
+      - imessage-archive
 
 networks:
-  imessage-search:
+  imessage-archive:
     driver: bridge

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Install iMessage archive client on macOS.
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/CorbinRandall/imessage-archive.git}"
@@ -7,11 +6,12 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/imessage-archive}"
 CONFIG_DIR="$HOME/.config"
 CONFIG_FILE="$CONFIG_DIR/imessage-archive.env"
 BIN_DIR="$HOME/bin"
+PYTHON="$(command -v python3)"
 
 echo "==> Installing iMessage Archive client"
 
 if ! command -v brew >/dev/null; then
-  echo "ERROR: Homebrew required. Install from https://brew.sh"
+  echo "ERROR: Homebrew required."
   exit 1
 fi
 
@@ -31,26 +31,30 @@ mkdir -p "$CONFIG_DIR" "$BIN_DIR" "$HOME/mnt" "$HOME/imessage-export"
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
   cp "$INSTALL_DIR/config/env.example" "$CONFIG_FILE"
-  echo "Created config: $CONFIG_FILE (edit UNRAID_HOST if needed)"
+  echo "Created $CONFIG_FILE"
 fi
+
+chmod +x "$INSTALL_DIR/client/"*.sh "$INSTALL_DIR/client/"*.py
 
 ln -sf "$INSTALL_DIR/client/export-and-sync.sh" "$BIN_DIR/imessage-backup"
 ln -sf "$INSTALL_DIR/client/mount-share.sh" "$BIN_DIR/imessage-mount"
-chmod +x "$INSTALL_DIR/client/"*.sh "$INSTALL_DIR/client/"*.py
 
-PLIST_SRC="$INSTALL_DIR/client/com.imessage-archive.backup.plist"
-PLIST_DST="$HOME/Library/LaunchAgents/com.imessage-archive.backup.plist"
-sed "s|HOME|$HOME|g" "$PLIST_SRC" > "$PLIST_DST"
+# Background agent (server-driven schedules + manual triggers)
+PLIST_DST="$HOME/Library/LaunchAgents/com.imessage-archive.agent.plist"
+sed -e "s|HOME|$HOME|g" -e "s|PYTHON|$PYTHON|g" \
+  "$INSTALL_DIR/client/com.imessage-archive.agent.plist" > "$PLIST_DST"
 launchctl unload "$PLIST_DST" 2>/dev/null || true
 launchctl load "$PLIST_DST"
 
+# Remove legacy monthly-only job if present
+launchctl unload "$HOME/Library/LaunchAgents/com.imessage-archive.backup.plist" 2>/dev/null || true
+launchctl unload "$HOME/Library/LaunchAgents/com.corbin.imessage-backup.plist" 2>/dev/null || true
+
 echo ""
 echo "Client installed."
-echo "  Config:     $CONFIG_FILE"
-echo "  Backup:     imessage-backup"
-echo "  Mount:      imessage-mount"
+echo "  Config:  $CONFIG_FILE"
+echo "  Agent:   running via launchd (polls server for schedules)"
+echo "  Manual:  imessage-backup"
 echo ""
-echo "Before first run, grant Full Disk Access to Terminal:"
-echo "  System Settings > Privacy & Security > Full Disk Access"
-echo ""
-echo "Then run:  imessage-backup"
+echo "Grant Full Disk Access to Terminal, then open:"
+echo "  http://192.168.1.200:8095"

@@ -15,17 +15,26 @@ UNRAID_SHARE="${UNRAID_SHARE:-Misc}"
 MOUNT_POINT="${MOUNT_POINT:-$HOME/mnt/unraid-imessage}"
 LOCAL_EXPORT="${LOCAL_EXPORT:-$HOME/imessage-export}"
 BACKUP_ROOT="$MOUNT_POINT/imessage-backup"
-SEARCH_API="${SEARCH_API:-http://$UNRAID_HOST:8095}"
-COPY_METHOD="${COPY_METHOD:-clone}"  # clone | full | disabled
+SERVER_URL="${SERVER_URL:-${SEARCH_API:-http://$UNRAID_HOST:8095}}"
+SEARCH_API="${SEARCH_API:-$SERVER_URL}"
+COPY_METHOD="${COPY_METHOD:-clone}"
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 
+report() {
+  [[ -n "${BACKUP_RUN_ID:-}" && -n "${CLIENT_TOKEN:-}" ]] || return 0
+  local status="${1:-}" phase="${2:-}" message="${3:-}"
+  curl -fsS -X POST "$SERVER_URL/api/clients/backup/status" \
+    -H "Authorization: Bearer $CLIENT_TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d "{\"run_id\":\"$BACKUP_RUN_ID\",\"status\":\"$status\",\"phase\":\"$phase\",\"message\":\"$message\"}" \
+    >/dev/null 2>&1 || true
+}
+
 ensure_mount() {
   mkdir -p "$MOUNT_POINT"
-  if mount | grep -q " on $MOUNT_POINT "; then
-    return 0
-  fi
-  log "Mounting smb://$UNRAID_HOST/$UNRAID_SHARE -> $MOUNT_POINT"
+  if mount | grep -q " on $MOUNT_POINT "; then return 0; fi
+  log "Mounting smb://$UNRAID_HOST/$UNRAID_SHARE"
   if [[ -n "${SMB_USER:-}" ]]; then
     mount_smbfs "//${SMB_USER}${SMB_PASS:+:$SMB_PASS}@$UNRAID_HOST/$UNRAID_SHARE" "$MOUNT_POINT"
   elif ! mount_smbfs "//guest@$UNRAID_HOST/$UNRAID_SHARE" "$MOUNT_POINT" 2>/dev/null; then
@@ -37,6 +46,7 @@ check_full_disk_access() {
   if ! imessage-exporter -d >/dev/null 2>&1; then
     log "ERROR: Full Disk Access required for Terminal."
     open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" || true
+    report "error" "preflight" "Full Disk Access required"
     exit 1
   fi
 }
@@ -44,25 +54,26 @@ check_full_disk_access() {
 export_messages() {
   mkdir -p "$LOCAL_EXPORT"/{html,raw,logs}
   local logfile="$LOCAL_EXPORT/logs/$(date +%Y-%m-%d_%H%M%S).log"
+  report "running" "export" "Exporting messages"
 
-  log "Quitting Messages app to avoid DB lock..."
   osascript -e 'quit app "Messages"' 2>/dev/null || true
   sleep 2
 
-  log "Exporting HTML archive (copy-method=$COPY_METHOD)..."
+  log "Exporting HTML (copy-method=$COPY_METHOD)..."
   imessage-exporter -f html -c "$COPY_METHOD" -o "$LOCAL_EXPORT/html" 2>&1 | tee -a "$logfile"
 
-  log "Copying raw database..."
+  log "Copying raw database and attachments..."
   cp "$HOME/Library/Messages/chat.db" "$LOCAL_EXPORT/raw/"
   rsync -a "$HOME/Library/Messages/Attachments/" "$LOCAL_EXPORT/raw/Attachments/" 2>/dev/null || true
 
-  log "Building JSONL for vector search..."
+  log "Building JSONL..."
   python3 "$SCRIPT_DIR/export-to-jsonl.py" \
     --db "$HOME/Library/Messages/chat.db" \
     --out "$LOCAL_EXPORT/messages.jsonl" 2>&1 | tee -a "$logfile"
 }
 
 sync_to_server() {
+  report "running" "sync" "Syncing to server"
   log "Syncing to server..."
   rsync -av --delete "$LOCAL_EXPORT/html/" "$BACKUP_ROOT/html-export/"
   rsync -av "$LOCAL_EXPORT/raw/" "$BACKUP_ROOT/raw/"
@@ -70,26 +81,22 @@ sync_to_server() {
 }
 
 trigger_reindex() {
+  report "running" "index" "Reindexing search"
   log "Triggering vector reindex..."
-  if curl -fsS -X POST "$SEARCH_API/index" -H 'Content-Type: application/json' \
-      -d '{"full": true}' >/dev/null; then
-    log "Reindex started."
-  else
-    log "WARN: Could not reach search API at $SEARCH_API"
-  fi
+  curl -fsS -X POST "$SERVER_URL/api/index" -H 'Content-Type: application/json' \
+    -d '{"full": true}' >/dev/null || log "WARN: reindex request failed"
 }
 
 main() {
-  command -v imessage-exporter >/dev/null || { log "Run: scripts/install-client.sh"; exit 1; }
+  command -v imessage-exporter >/dev/null || { report "error" "preflight" "imessage-exporter not installed"; exit 1; }
   mkdir -p "$LOCAL_EXPORT"
   ensure_mount
   check_full_disk_access
   export_messages
   sync_to_server
   trigger_reindex
-  log "Done."
-  log "  HTML browse: $BACKUP_ROOT/html-export/"
-  log "  Search UI:   $SEARCH_API"
+  report "success" "done" "Backup complete"
+  log "Done. View at $SERVER_URL"
 }
 
 main "$@"
