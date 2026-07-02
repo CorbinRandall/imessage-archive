@@ -1,7 +1,17 @@
 fastapi==0.115.12
 uvicorn[standard]==0.34.0
 qdrant-client==1.13.3
-fastembed==0.6.0
+# fastembed-gpu replaces fastembed and pulls onnxruntime-gpu (CUDA 12.x / cuDNN 9)
+fastembed-gpu==0.6.0
+# CUDA runtime libs for onnxruntime-gpu, exposed via LD_LIBRARY_PATH in the Dockerfile
+nvidia-cuda-runtime-cu12
+nvidia-cuda-nvrtc-cu12
+nvidia-cublas-cu12
+nvidia-cudnn-cu12>=9,<10
+nvidia-cufft-cu12
+nvidia-curand-cu12
+nvidia-cusparse-cu12
+nvidia-nvjitlink-cu12
 pydantic==2.11.3
 pillow==11.2.1
 pillow-heif==0.22.0

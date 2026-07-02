@@ -43,8 +43,26 @@ class MessageIndexer:
     def embedder(self) -> TextEmbedding:
         if self._embedder is None:
             logger.info("Loading embedding model: %s", EMBED_MODEL)
-            self._embedder = TextEmbedding(model_name=EMBED_MODEL)
+            self._embedder = self._load_embedder()
         return self._embedder
+
+    @staticmethod
+    def _load_embedder() -> TextEmbedding:
+        """Load the embedding model on GPU (CUDA) when available, falling back to CPU."""
+        try:
+            embedder = TextEmbedding(
+                model_name=EMBED_MODEL,
+                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+            )
+            active = embedder.model.model.get_providers()
+            if "CUDAExecutionProvider" in active:
+                logger.info("Embedding model running on GPU (CUDAExecutionProvider)")
+            else:
+                logger.warning("CUDA requested but not active; providers=%s", active)
+            return embedder
+        except Exception:  # noqa: BLE001
+            logger.exception("GPU embedding init failed; falling back to CPU")
+            return TextEmbedding(model_name=EMBED_MODEL, providers=["CPUExecutionProvider"])
 
     @property
     def qdrant(self) -> QdrantClient:
