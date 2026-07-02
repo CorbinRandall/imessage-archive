@@ -126,7 +126,11 @@ def list_chats() -> list[dict[str, Any]]:
 
 def chat_messages(chat_id: int, limit: int = 500, offset: int = 0) -> list[dict[str, Any]]:
     result = [msg for msg in load_messages() if msg.get("chat_id") == chat_id]
-    return result[offset : offset + limit]
+    # Return the newest `limit` messages (offset pages backwards in time),
+    # preserving chronological order for rendering.
+    end = len(result) - offset
+    start = max(0, end - limit)
+    return result[start:end] if end > 0 else []
 
 
 def resolve_media_path(relative: str) -> Path | None:

@@ -91,6 +91,7 @@ input[type="search"], input[type="text"], input[type="number"], select {
 .reaction-badge { background: var(--panel2); border: 1.5px solid var(--bg); border-radius: 999px; padding: .1rem .35rem; font-size: .8rem; cursor: default; }
 .file-link { display: inline-flex; align-items: center; gap: .4rem; background: var(--panel2); border: 1px solid var(--border); padding: .5rem .75rem; border-radius: 12px; color: var(--text); text-decoration: none; font-size: .85rem; margin-top: 2px; }
 .day-divider { text-align: center; color: var(--muted); font-size: .72rem; margin: 1rem 0 .5rem; }
+.reply-quote { border-left: 3px solid var(--border); color: var(--muted); font-size: .78rem; padding: .2rem .6rem; margin: 0 .5rem .15rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ===== Media tab ===== */
 .media-filters { display: flex; gap: .4rem; flex-wrap: wrap; }

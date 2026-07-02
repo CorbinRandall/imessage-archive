@@ -16,6 +16,10 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+function linkify(s) {
+  return esc(s).replace(/(https?:\/\/[^\s<]+)/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
+}
+
 function fmtTime(ts) {
   if (!ts) return 'never';
   return new Date(ts * 1000).toLocaleString();
@@ -197,6 +201,9 @@ window.openChat = async (chatId) => {
     return;
   }
 
+  const byGuid = {};
+  for (const m of msgs) if (m.guid) byGuid[m.guid] = m;
+
   let html = '';
   let lastDay = '';
   let lastSender = null;
@@ -215,8 +222,12 @@ window.openChat = async (chatId) => {
 
     html += `<div class="msg-row ${side} ${senderChanged ? 'gap' : ''}">`;
     if (showSender) html += `<div class="msg-sender">${esc(m.sender)}</div>`;
+    const origin = m.thread_originator_guid && byGuid[m.thread_originator_guid];
+    if (origin && origin.text) {
+      html += `<div class="reply-quote">${esc(origin.sender)}: ${esc(origin.text.slice(0, 80))}${origin.text.length > 80 ? '…' : ''}</div>`;
+    }
     if (m.text) {
-      html += `<div class="bubble ${isSms ? 'sms' : ''}">${esc(m.text)}${m.edited ? '<span class="edited-tag">(edited)</span>' : ''}</div>`;
+      html += `<div class="bubble ${isSms ? 'sms' : ''}">${linkify(m.text)}${m.edited ? '<span class="edited-tag">(edited)</span>' : ''}</div>`;
     }
     html += renderBubbleMedia(m.attachments);
     html += renderReactions(m.reactions);
