@@ -158,8 +158,13 @@ $('#chat-filter').oninput = (e) => {
   renderChatList(allChats.filter(c => (c.chat || '').toLowerCase().includes(q)));
 };
 
+// Group avatar assets sync as attachments but aren't real messages.
+function isJunkAttachment(a) {
+  return (a.name || '') === 'GroupPhotoImage';
+}
+
 function renderBubbleMedia(attachments) {
-  return (attachments || []).map(a => {
+  return (attachments || []).filter(a => !isJunkAttachment(a)).map(a => {
     const urls = mediaFallbacks(a);
     const url = urls[0];
     const mime = a.mime_type || '';
@@ -209,7 +214,8 @@ window.openChat = async (chatId) => {
   let lastSender = null;
   let lastTs = 0;
   for (const m of msgs) {
-    if (!m.text && !(m.attachments || []).length && !(m.reactions || []).length) continue;
+    const realAtts = (m.attachments || []).filter(a => !isJunkAttachment(a));
+    if (!m.text && !realAtts.length && !(m.reactions || []).length) continue;
     const day = (m.date || '').slice(0, 10);
     const ts = m.date ? Date.parse(m.date) : 0;
     if (day !== lastDay) {
