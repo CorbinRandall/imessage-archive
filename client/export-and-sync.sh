@@ -2,6 +2,9 @@
 # Export iMessages from Mac, sync to server, trigger vector reindex.
 set -euo pipefail
 
+# launchd agents get a minimal PATH — include Homebrew and user bins.
+export PATH="/opt/homebrew/bin:/usr/local/bin:${HOME}/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-$HOME/.config/imessage-archive.env}"
 
@@ -110,7 +113,11 @@ trigger_reindex() {
 }
 
 main() {
-  command -v imessage-exporter >/dev/null || { report "error" "preflight" "imessage-exporter not installed"; exit 1; }
+  if ! command -v imessage-exporter >/dev/null; then
+    log "ERROR: imessage-exporter not found (PATH=$PATH)"
+    report "error" "preflight" "imessage-exporter not found — install with: brew install imessage-exporter"
+    exit 1
+  fi
   mkdir -p "$LOCAL_EXPORT"
   ensure_mount
   check_full_disk_access
