@@ -118,7 +118,7 @@ def health() -> dict[str, Any]:
 
 @app.get("/api/stats")
 def stats() -> dict[str, Any]:
-    return {"archive": archive.archive_stats(), "index": _index_state}
+    return {"archive": archive.archive_stats(), "index": _index_state, "gpu": archive.gpu_status()}
 
 
 @app.get("/api/chats")
@@ -154,37 +154,21 @@ def get_html_export(filename: str) -> FileResponse:
 
 
 @app.get("/api/media/attachment/{attachment_id:int}")
-def get_media_by_attachment_id(attachment_id: int) -> FileResponse:
+def get_media_by_attachment_id(attachment_id: int, size: str = Query("full")) -> FileResponse:
     resolved = archive.resolve_media_by_attachment_id(attachment_id)
     if not resolved:
         raise HTTPException(404, "Media not found")
-    if resolved.suffix.lower() in {".heic", ".heif", ".tif", ".tiff"}:
-        converted = archive.convert_image_for_web(resolved)
-        if converted:
-            return FileResponse(converted, media_type="image/jpeg")
-    if resolved.suffix.lower() == ".caf":
-        converted = archive.convert_audio_for_web(resolved)
-        if converted:
-            return FileResponse(converted, media_type="audio/mp4")
-    media_type, _ = mimetypes.guess_type(str(resolved))
-    return FileResponse(resolved, media_type=media_type or "application/octet-stream")
+    path, media_type = archive.serve_media_file(resolved, thumb=size == "thumb")
+    return FileResponse(path, media_type=media_type)
 
 
 @app.get("/api/media/{path:path}")
-def get_media(path: str) -> FileResponse:
+def get_media(path: str, size: str = Query("full")) -> FileResponse:
     resolved = archive.resolve_media_path(path)
     if not resolved:
         raise HTTPException(404, "Media not found")
-    if resolved.suffix.lower() in {".heic", ".heif", ".tif", ".tiff"}:
-        converted = archive.convert_image_for_web(resolved)
-        if converted:
-            return FileResponse(converted, media_type="image/jpeg")
-    if resolved.suffix.lower() == ".caf":
-        converted = archive.convert_audio_for_web(resolved)
-        if converted:
-            return FileResponse(converted, media_type="audio/mp4")
-    media_type, _ = mimetypes.guess_type(str(resolved))
-    return FileResponse(resolved, media_type=media_type or "application/octet-stream")
+    path_resolved, media_type = archive.serve_media_file(resolved, thumb=size == "thumb")
+    return FileResponse(path_resolved, media_type=media_type)
 
 
 # --- Search ---

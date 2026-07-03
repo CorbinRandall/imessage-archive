@@ -48,22 +48,21 @@ function initials(name) {
   return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
 }
 
-function mediaUrl(att) {
-  if (att.attachment_id != null) {
-    return `/api/media/attachment/${att.attachment_id}`;
-  }
-  const p = (att.paths?.length ? att.paths[0] : att.path) || '';
-  return `/api/media/${encodeURI(p)}`;
+function mediaUrl(att, thumb = false) {
+  const base = att.attachment_id != null
+    ? `/api/media/attachment/${att.attachment_id}`
+    : `/api/media/${encodeURI((att.paths?.length ? att.paths[0] : att.path) || '')}`;
+  return thumb ? `${base}?size=thumb` : base;
 }
 
-function mediaFallbacks(att) {
+function mediaFallbacks(att, thumb = false) {
   const urls = [];
-  if (att.attachment_id != null) {
-    urls.push(`/api/media/attachment/${att.attachment_id}`);
-  }
-  for (const p of (att.paths || [att.path]).filter(Boolean)) {
-    const u = `/api/media/${encodeURI(p)}`;
-    if (!urls.includes(u)) urls.push(u);
+  const push = (u) => { if (u && !urls.includes(u)) urls.push(u); };
+  push(mediaUrl(att, thumb));
+  if (!thumb) {
+    for (const p of (att.paths || [att.path]).filter(Boolean)) {
+      push(`/api/media/${encodeURI(p)}`);
+    }
   }
   return urls;
 }
@@ -290,24 +289,23 @@ async function loadMedia(reset = false) {
   $('#media-count').textContent = `${data.total} items`;
 
   const cells = (data.items || []).map(item => {
-    const urls = mediaFallbacks(item);
-    const url = urls[0];
+    const thumbUrl = mediaUrl(item, true);
+    const fullUrl = mediaUrl(item, false);
     const caption = `${item.chat || ''} · ${(item.date || '').slice(0, 10)}`;
-    const fallback = urls[1] ? `onerror="if(this.src!=='${urls[1]}'){this.src='${urls[1]}';}else{this.closest('.media-cell')?.remove();}"` : `onerror="this.closest('.media-cell')?.remove()"`;
     if (item.kind === 'video')
-      return `<div class="media-cell" onclick="openLightbox('${url}','video','${esc(caption)}')">
-        <video src="${url}#t=0.5" preload="metadata" muted onerror="this.closest('.media-cell')?.remove()"></video>
+      return `<div class="media-cell" onclick="openLightbox('${fullUrl}','video','${esc(caption)}')">
+        <img src="${thumbUrl}" loading="lazy" alt="" onerror="this.closest('.media-cell')?.remove()" />
         <span class="badge">&#9654; video</span>
         <div class="cell-meta">${esc(caption)}</div>
       </div>`;
     if (item.kind === 'audio')
       return `<div class="media-cell audio-cell">
         <div>&#127911;</div>
-        <audio src="${url}" controls preload="none" style="width:100%"></audio>
+        <audio src="${fullUrl}" controls preload="none" style="width:100%"></audio>
         <div>${esc(caption)}</div>
       </div>`;
-    return `<div class="media-cell" onclick="openLightbox('${url}','image','${esc(caption)}')">
-      <img src="${url}" loading="lazy" ${fallback} />
+    return `<div class="media-cell" onclick="openLightbox('${fullUrl}','image','${esc(caption)}')">
+      <img src="${thumbUrl}" loading="lazy" alt="" onerror="this.closest('.media-cell')?.remove()" />
       ${item.kind === 'gif' ? '<span class="badge">GIF</span>' : ''}
       <div class="cell-meta">${esc(caption)}</div>
     </div>`;

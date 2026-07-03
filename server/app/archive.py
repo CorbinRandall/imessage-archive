@@ -13,33 +13,155 @@ _stats_cache: dict[str, Any] = {"at": 0.0, "data": {}}
 _STATS_TTL = 60.0
 
 _MEDIA_CACHE_DIR = STATE_DIR / "media-cache"
+_THUMB_MAX = 320
+_FULL_MAX = 2048
+_ffmpeg_hwaccels: list[str] | None = None
 
 
-def convert_image_for_web(source: Path) -> Path | None:
-    """Convert HEIC/TIFF to browser-friendly JPEG, cached on disk."""
+def _ffmpeg_hwaccel_list() -> list[str]:
+    global _ffmpeg_hwaccels
+    if _ffmpeg_hwaccels is not None:
+        return _ffmpeg_hwaccels
+    import subprocess
+
     try:
-        import hashlib
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-hwaccels"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        _ffmpeg_hwaccels = [line.strip() for line in proc.stdout.splitlines() if line.strip() and not line.startswith("Hardware")]
+    except Exception:
+        _ffmpeg_hwaccels = []
+    return _ffmpeg_hwaccels
 
+
+def gpu_media_available() -> bool:
+    return "cuda" in _ffmpeg_hwaccel_list()
+
+
+def _cache_key(source: Path, label: str) -> Path:
+    import hashlib
+
+    _MEDIA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha1(f"{label}:{source}:{source.stat().st_mtime_ns}".encode()).hexdigest()
+    return _MEDIA_CACHE_DIR / f"{digest}.jpg"
+
+
+def _convert_image_pillow(source: Path, dest: Path, max_size: int) -> bool:
+    try:
         from PIL import Image
         import pillow_heif
 
         pillow_heif.register_heif_opener()
     except ImportError:
-        return None
-
-    _MEDIA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    key = hashlib.sha1(f"{source}:{source.stat().st_mtime_ns}".encode()).hexdigest()
-    cached = _MEDIA_CACHE_DIR / f"{key}.jpg"
-    if cached.exists():
-        return cached
+        return False
     try:
         with Image.open(source) as img:
             img = img.convert("RGB")
-            img.thumbnail((2048, 2048))
-            img.save(cached, "JPEG", quality=85)
-        return cached
+            img.thumbnail((max_size, max_size))
+            img.save(dest, "JPEG", quality=82 if max_size <= _THUMB_MAX else 85)
+        return True
     except Exception:
-        return None
+        return False
+
+
+def _convert_image_ffmpeg_gpu(source: Path, dest: Path, max_size: int) -> bool:
+    """Use NVIDIA decode/scale when the container ffmpeg build supports cuda."""
+    if "cuda" not in _ffmpeg_hwaccel_list():
+        return False
+    import subprocess
+
+    vf = f"scale_cuda={max_size}:-2:force_original_aspect_ratio=decrease"
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
+        "-i", str(source),
+        "-vf", vf,
+        "-frames:v", "1",
+        str(dest),
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=60)
+        return dest.exists() and dest.stat().st_size > 0
+    except Exception:
+        dest.unlink(missing_ok=True)
+        return False
+
+
+def convert_image_for_web(source: Path, *, thumb: bool = False) -> Path | None:
+    """Convert HEIC/TIFF/images to browser-friendly JPEG, cached on disk."""
+    max_size = _THUMB_MAX if thumb else _FULL_MAX
+    cached = _cache_key(source, f"img:{max_size}")
+    if cached.exists():
+        return cached
+    if _convert_image_ffmpeg_gpu(source, cached, max_size):
+        return cached
+    if _convert_image_pillow(source, cached, max_size):
+        return cached
+    return None
+
+
+def media_thumbnail(source: Path) -> Path | None:
+    """Small cached JPEG for gallery grids (photos, HEIC, or video poster)."""
+    suffix = source.suffix.lower()
+    if suffix in {".heic", ".heif", ".tif", ".tiff", ".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+        return convert_image_for_web(source, thumb=True)
+    if suffix in {".mp4", ".mov", ".m4v", ".webm"}:
+        cached = _cache_key(source, f"vidthumb:{_THUMB_MAX}")
+        if cached.exists():
+            return cached
+        import subprocess
+
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+        if "cuda" in _ffmpeg_hwaccel_list():
+            cmd += ["-hwaccel", "cuda"]
+        cmd += ["-ss", "0.5", "-i", str(source), "-frames:v", "1", "-vf", f"scale={_THUMB_MAX}:-2", str(cached)]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=90)
+            return cached if cached.exists() else None
+        except Exception:
+            cached.unlink(missing_ok=True)
+            return None
+    return convert_image_for_web(source, thumb=True)
+
+
+def serve_media_file(resolved: Path, *, thumb: bool = False) -> tuple[Path, str]:
+    """Return (path, media_type) for a resolved attachment file."""
+    suffix = resolved.suffix.lower()
+    if thumb:
+        preview = media_thumbnail(resolved)
+        if preview:
+            return preview, "image/jpeg"
+    if suffix in {".heic", ".heif", ".tif", ".tiff"}:
+        converted = convert_image_for_web(resolved)
+        if converted:
+            return converted, "image/jpeg"
+    if suffix == ".caf":
+        converted = convert_audio_for_web(resolved)
+        if converted:
+            return converted, "audio/mp4"
+    import mimetypes
+
+    media_type, _ = mimetypes.guess_type(str(resolved))
+    return resolved, media_type or "application/octet-stream"
+
+
+def gpu_status() -> dict[str, Any]:
+    providers: list[str] = []
+    try:
+        from app.indexer import indexer
+
+        providers = list(indexer.embedder.model.model.get_providers())
+    except Exception:
+        pass
+    return {
+        "search_on_gpu": "CUDAExecutionProvider" in providers,
+        "embed_providers": providers,
+        "media_ffmpeg_cuda": gpu_media_available(),
+        "ffmpeg_hwaccels": _ffmpeg_hwaccel_list(),
+    }
 
 
 def convert_audio_for_web(source: Path) -> Path | None:
@@ -204,8 +326,15 @@ def resolve_media_by_attachment_id(attachment_id: int) -> Path | None:
 
 def media_gallery(kind: str = "all", limit: int = 200, offset: int = 0) -> dict[str, Any]:
     """All media attachments across chats, newest first."""
+    items = _media_gallery_cached(_jsonl_mtime(), kind)
+    total = len(items)
+    return {"total": total, "items": items[offset : offset + limit]}
+
+
+@lru_cache(maxsize=4)
+def _media_gallery_cached(mtime: float, kind: str) -> tuple[dict[str, Any], ...]:
     items: list[dict[str, Any]] = []
-    for msg in load_messages():
+    for msg in _messages_cached(mtime):
         for att in msg.get("attachments") or []:
             mime = att.get("mime_type") or ""
             name = (att.get("name") or "").lower()
@@ -234,8 +363,7 @@ def media_gallery(kind: str = "all", limit: int = 200, offset: int = 0) -> dict[
                 "date": msg.get("date"),
             })
     items.sort(key=lambda i: i.get("date") or "", reverse=True)
-    total = len(items)
-    return {"total": total, "items": items[offset : offset + limit]}
+    return tuple(items)
 
 
 def list_html_exports() -> list[dict[str, str]]:
@@ -284,3 +412,4 @@ def invalidate_caches() -> None:
     _messages_cached.cache_clear()
     _contacts_data.cache_clear()
     _attachment_paths_cached.cache_clear()
+    _media_gallery_cached.cache_clear()
