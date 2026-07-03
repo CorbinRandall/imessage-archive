@@ -87,6 +87,23 @@ export_messages() {
     --html-dir "$LOCAL_EXPORT/html" 2>&1 | tee -a "$logfile"
 }
 
+upload_to_immich() {
+  if [[ -z "${IMMICH_API_KEY:-}" ]]; then
+    log "IMMICH_API_KEY not set — skipping Immich upload (will sync attachments locally)"
+    return 0
+  fi
+  report "running" "immich" "Uploading media to Immich"
+  log "Uploading photos/videos to Immich album '${IMMICH_ALBUM:-iMessage}'..."
+  python3 "$SCRIPT_DIR/upload-to-immich.py" \
+    --jsonl "$LOCAL_EXPORT/messages.jsonl" \
+    --html-dir "$LOCAL_EXPORT/html" \
+    --raw-dir "$LOCAL_EXPORT/raw" \
+    --immich-url "${IMMICH_URL:-http://192.168.1.200:8090}" \
+    --api-key "$IMMICH_API_KEY" \
+    --album "${IMMICH_ALBUM:-iMessage}" \
+    --map-file "$LOCAL_EXPORT/immich-map.json" 2>&1 | tee -a "$LOCAL_EXPORT/logs/immich-upload.log"
+}
+
 rsync_retry() {
   # SMB mounts occasionally drop mid-transfer; remount and resume up to 3 times.
   local attempt
@@ -103,10 +120,16 @@ rsync_retry() {
 sync_to_server() {
   report "running" "sync" "Syncing to server"
   log "Syncing to server..."
-  rsync_retry --delete "$LOCAL_EXPORT/html/" "$BACKUP_ROOT/html-export/"
-  rsync_retry "$LOCAL_EXPORT/raw/" "$BACKUP_ROOT/raw/"
   rsync_retry "$LOCAL_EXPORT/messages.jsonl" "$BACKUP_ROOT/messages.jsonl"
   rsync_retry "$LOCAL_EXPORT/contacts.json" "$BACKUP_ROOT/contacts.json" 2>/dev/null || true
+  rsync_retry "$LOCAL_EXPORT/immich-map.json" "$BACKUP_ROOT/immich-map.json" 2>/dev/null || true
+  if [[ -z "${IMMICH_API_KEY:-}" ]]; then
+    log "No Immich key — syncing html + raw attachments locally"
+    rsync_retry --delete "$LOCAL_EXPORT/html/" "$BACKUP_ROOT/html-export/"
+    rsync_retry "$LOCAL_EXPORT/raw/" "$BACKUP_ROOT/raw/"
+  else
+    log "Immich enabled — skipping bulk attachment rsync (media lives in Immich)"
+  fi
 }
 
 trigger_reindex() {
@@ -126,6 +149,7 @@ main() {
   ensure_mount
   check_full_disk_access
   export_messages
+  upload_to_immich
   sync_to_server
   trigger_reindex
   report "success" "done" "Backup complete"

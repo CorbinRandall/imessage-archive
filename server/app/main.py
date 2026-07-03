@@ -7,12 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app import archive, db, scheduler
-from app.config import DATA_DIR, HTML_DIR, JSONL_PATH, STATE_DIR
+from app import archive, db, immich_client, scheduler
+from app.config import DATA_DIR, HTML_DIR, IMMICH_ALBUM, IMMICH_URL, JSONL_PATH, STATE_DIR
 from app.indexer import _index_state, indexer
 
 logging.basicConfig(level=logging.INFO)
@@ -132,12 +132,34 @@ def get_chat_messages(chat_id: int, limit: int = Query(500, le=2000), offset: in
 
 
 @app.get("/api/media-gallery")
-def media_gallery(
-    kind: str = Query("all"),
-    limit: int = Query(200, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
-) -> dict[str, Any]:
-    return archive.media_gallery(kind, limit, offset)
+def media_gallery_deprecated() -> dict[str, Any]:
+    """Deprecated — browse media in Immich album instead."""
+    raise HTTPException(410, "Media gallery removed; use Immich album 'iMessage'")
+
+
+@app.get("/api/immich/assets/{asset_id}/thumbnail")
+async def immich_thumbnail(asset_id: str, size: str = Query("thumbnail")) -> StreamingResponse:
+    return await immich_client.proxy_thumbnail(asset_id, size)
+
+
+@app.get("/api/immich/assets/{asset_id}/original")
+async def immich_original(asset_id: str) -> StreamingResponse:
+    return await immich_client.proxy_original(asset_id)
+
+
+@app.get("/api/immich/assets/{asset_id}/playback")
+async def immich_playback(asset_id: str) -> StreamingResponse:
+    return await immich_client.proxy_playback(asset_id)
+
+
+@app.get("/api/immich/status")
+def immich_status() -> dict[str, Any]:
+    return {
+        "enabled": immich_client.immich_enabled(),
+        "url": IMMICH_URL,
+        "album": IMMICH_ALBUM,
+        "album_url": f"{IMMICH_URL}/albums" if IMMICH_URL else "",
+    }
 
 
 @app.get("/api/html")

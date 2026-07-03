@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from app.config import ATTACHMENTS_DIR, CONTACTS_PATH, DATA_DIR, HTML_ATTACHMENTS_DIR, HTML_DIR, JSONL_PATH, RAW_DIR, STATE_DIR
+from app.config import ATTACHMENTS_DIR, CONTACTS_PATH, DATA_DIR, HTML_ATTACHMENTS_DIR, HTML_DIR, IMMICH_API_KEY, IMMICH_URL, JSONL_PATH, RAW_DIR, STATE_DIR
 
 _stats_cache: dict[str, Any] = {"at": 0.0, "data": {}}
 _STATS_TTL = 60.0
@@ -161,6 +161,8 @@ def gpu_status() -> dict[str, Any]:
         "embed_providers": providers,
         "media_ffmpeg_cuda": gpu_media_available(),
         "ffmpeg_hwaccels": _ffmpeg_hwaccel_list(),
+        "immich_enabled": bool(IMMICH_URL and IMMICH_API_KEY),
+        "immich_url": IMMICH_URL,
     }
 
 

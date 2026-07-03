@@ -48,7 +48,31 @@ function initials(name) {
   return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
 }
 
+function thumbUrl(att) {
+  if (att.immich_asset_id) {
+    return `/api/immich/assets/${att.immich_asset_id}/thumbnail?size=thumbnail`;
+  }
+  return mediaUrl(att, true);
+}
+
+function fullMediaUrl(att) {
+  if (att.immich_asset_id) {
+    const mime = att.mime_type || '';
+    const name = (att.name || '').toLowerCase();
+    if (mime.startsWith('video/') || /\.(mp4|mov|m4v)$/i.test(name)) {
+      return `/api/immich/assets/${att.immich_asset_id}/playback`;
+    }
+    return `/api/immich/assets/${att.immich_asset_id}/original`;
+  }
+  return mediaUrl(att, false);
+}
+
 function mediaUrl(att, thumb = false) {
+  if (att.immich_asset_id) {
+    return thumb
+      ? `/api/immich/assets/${att.immich_asset_id}/thumbnail?size=thumbnail`
+      : fullMediaUrl(att);
+  }
   const base = att.attachment_id != null
     ? `/api/media/attachment/${att.attachment_id}`
     : `/api/media/${encodeURI((att.paths?.length ? att.paths[0] : att.path) || '')}`;
@@ -58,8 +82,8 @@ function mediaUrl(att, thumb = false) {
 function mediaFallbacks(att, thumb = false) {
   const urls = [];
   const push = (u) => { if (u && !urls.includes(u)) urls.push(u); };
-  push(mediaUrl(att, thumb));
-  if (!thumb) {
+  push(thumb ? thumbUrl(att) : fullMediaUrl(att));
+  if (!att.immich_asset_id && !thumb) {
     for (const p of (att.paths || [att.path]).filter(Boolean)) {
       push(`/api/media/${encodeURI(p)}`);
     }
@@ -74,20 +98,26 @@ $$('.nav').forEach(btn => btn.onclick = () => {
   btn.classList.add('active');
   $(`#view-${btn.dataset.view}`).classList.add('active');
   if (btn.dataset.view === 'browse') loadChats();
-  if (btn.dataset.view === 'media') loadMedia(true);
   if (btn.dataset.view === 'schedules') loadSchedules();
   if (btn.dataset.view === 'dashboard') loadDashboard();
 });
 
 // ===== Dashboard =====
 async function loadDashboard() {
-  const [stats, clients] = await Promise.all([api('/api/stats'), api('/api/clients')]);
+  const [stats, clients, immich] = await Promise.all([
+    api('/api/stats'),
+    api('/api/clients'),
+    api('/api/immich/status').catch(() => ({ enabled: false })),
+  ]);
   const a = stats.archive || {};
+  const immichCard = immich.enabled
+    ? `<div class="card"><div class="label">Media (Immich)</div><div class="value"><a href="${immich.url}" target="_blank" style="color:inherit;font-size:1rem">Open album</a></div></div>`
+    : `<div class="card"><div class="label">Media (Immich)</div><div class="value muted" style="font-size:.85rem">Not configured</div></div>`;
   $('#stat-cards').innerHTML = `
     <div class="card"><div class="label">Messages</div><div class="value">${a.message_count || 0}</div></div>
     <div class="card"><div class="label">Chats</div><div class="value">${a.chat_count || 0}</div></div>
     <div class="card"><div class="label">Contacts</div><div class="value">${a.contact_count || 0}</div></div>
-    <div class="card"><div class="label">Media files</div><div class="value">${a.html_media_count || 0}</div></div>
+    ${immichCard}
   `;
   $('#sidebar-stats').innerHTML = `${a.message_count || 0} msgs · ${a.contact_count || 0} contacts`;
 
@@ -175,18 +205,18 @@ function isJunkAttachment(a) {
 
 function renderBubbleMedia(attachments) {
   return (attachments || []).filter(a => !isJunkAttachment(a)).map(a => {
-    const urls = mediaFallbacks(a);
-    const url = urls[0];
+    const thumb = thumbUrl(a);
+    const full = fullMediaUrl(a);
     const mime = a.mime_type || '';
     const name = a.name || '';
-    const fallback = urls[1] ? `onerror="if(this.src!=='${urls[1]}'){this.src='${urls[1]}';}else{this.closest('.msg-media')?.remove();}"` : `onerror="this.closest('.msg-media')?.remove()"`;
+    const err = `onerror="this.closest('.msg-media')?.remove()"`;
     if (mime.startsWith('image/') || /\.(jpe?g|png|gif|heic|webp)$/i.test(name))
-      return `<div class="msg-media" onclick="openLightbox('${url}','image','${esc(name)}')"><img src="${url}" alt="${esc(name)}" loading="lazy" ${fallback} /></div>`;
+      return `<div class="msg-media" onclick="openLightbox('${full}','image','${esc(name)}')"><img src="${thumb}" alt="${esc(name)}" loading="lazy" ${err} /></div>`;
     if (mime.startsWith('video/') || /\.(mp4|mov|m4v)$/i.test(name))
-      return `<div class="msg-media"><video src="${url}" controls preload="metadata" onerror="this.closest('.msg-media')?.remove()"></video></div>`;
+      return `<div class="msg-media" onclick="openLightbox('${full}','video','${esc(name)}')"><img src="${thumb}" alt="video" loading="lazy" ${err} /><span class="video-play">&#9654;</span></div>`;
     if (mime.startsWith('audio/') || /\.(m4a|caf|mp3|aac|wav)$/i.test(name))
-      return `<audio src="${url}" controls preload="none" onerror="this.remove()"></audio>`;
-    return `<a class="file-link" href="${url}" target="_blank">&#128206; ${esc(name || 'Attachment')}</a>`;
+      return `<audio src="${full}" controls preload="none" onerror="this.remove()"></audio>`;
+    return `<a class="file-link" href="${full}" target="_blank">&#128206; ${esc(name || 'Attachment')}</a>`;
   }).join('');
 }
 
@@ -265,60 +295,6 @@ window.openChat = async (chatId) => {
   detail.querySelectorAll('img').forEach(el => el.addEventListener('load', repin));
   detail.querySelectorAll('video').forEach(el => el.addEventListener('loadedmetadata', repin));
 };
-
-// ===== Media tab =====
-let mediaKind = 'all';
-let mediaOffset = 0;
-let mediaTotal = 0;
-const MEDIA_PAGE = 100;
-
-$$('.media-filters .chip').forEach(chip => chip.onclick = () => {
-  $$('.media-filters .chip').forEach(c => c.classList.remove('active'));
-  chip.classList.add('active');
-  mediaKind = chip.dataset.kind;
-  loadMedia(true);
-});
-
-async function loadMedia(reset = false) {
-  if (reset) {
-    mediaOffset = 0;
-    $('#media-grid').innerHTML = '<p class="muted">Loading media...</p>';
-  }
-  const data = await api(`/api/media-gallery?kind=${mediaKind}&limit=${MEDIA_PAGE}&offset=${mediaOffset}`);
-  mediaTotal = data.total;
-  $('#media-count').textContent = `${data.total} items`;
-
-  const cells = (data.items || []).map(item => {
-    const thumbUrl = mediaUrl(item, true);
-    const fullUrl = mediaUrl(item, false);
-    const caption = `${item.chat || ''} · ${(item.date || '').slice(0, 10)}`;
-    if (item.kind === 'video')
-      return `<div class="media-cell" onclick="openLightbox('${fullUrl}','video','${esc(caption)}')">
-        <img src="${thumbUrl}" loading="lazy" alt="" onerror="this.closest('.media-cell')?.remove()" />
-        <span class="badge">&#9654; video</span>
-        <div class="cell-meta">${esc(caption)}</div>
-      </div>`;
-    if (item.kind === 'audio')
-      return `<div class="media-cell audio-cell">
-        <div>&#127911;</div>
-        <audio src="${fullUrl}" controls preload="none" style="width:100%"></audio>
-        <div>${esc(caption)}</div>
-      </div>`;
-    return `<div class="media-cell" onclick="openLightbox('${fullUrl}','image','${esc(caption)}')">
-      <img src="${thumbUrl}" loading="lazy" alt="" onerror="this.closest('.media-cell')?.remove()" />
-      ${item.kind === 'gif' ? '<span class="badge">GIF</span>' : ''}
-      <div class="cell-meta">${esc(caption)}</div>
-    </div>`;
-  }).join('');
-
-  if (reset) $('#media-grid').innerHTML = cells || '<p class="muted">No media found. Run a backup first.</p>';
-  else $('#media-grid').insertAdjacentHTML('beforeend', cells);
-
-  mediaOffset += (data.items || []).length;
-  $('#btn-media-more').classList.toggle('hidden', mediaOffset >= mediaTotal);
-}
-
-$('#btn-media-more').onclick = () => loadMedia(false);
 
 // ===== Lightbox =====
 window.openLightbox = (url, type, caption) => {

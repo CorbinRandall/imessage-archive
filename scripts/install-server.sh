@@ -13,7 +13,7 @@ APP_PATH="${APP_PATH:-$REPO_DIR}"
 DATA_PATH="${DATA_PATH:-/mnt/user/Misc/imessage-backup}"
 SEARCH_PORT="${SEARCH_PORT:-8095}"
 
-export APP_PATH DATA_PATH SEARCH_PORT
+export APP_PATH DATA_PATH SEARCH_PORT IMMICH_URL IMMICH_API_KEY IMMICH_ALBUM
 
 mkdir -p "$DATA_PATH"/{html-export,raw,logs} "$APP_PATH"/{qdrant,state}
 chmod -R 777 "$DATA_PATH" 2>/dev/null || true
@@ -31,3 +31,7 @@ echo "iMessage Archive is running."
 echo "  Web UI:     http://${HOST}:${SEARCH_PORT}"
 echo "  Data path:  $DATA_PATH"
 echo "  State DB:   $APP_PATH/state"
+if [[ -z "${IMMICH_API_KEY:-}" ]]; then
+  echo ""
+  echo "Tip: set IMMICH_API_KEY in $ENV_FILE for Immich media proxy (same key as Mac client)."
+fi
