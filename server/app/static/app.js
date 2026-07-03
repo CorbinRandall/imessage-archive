@@ -49,12 +49,23 @@ function initials(name) {
 }
 
 function mediaUrl(att) {
+  if (att.attachment_id != null) {
+    return `/api/media/attachment/${att.attachment_id}`;
+  }
   const p = (att.paths?.length ? att.paths[0] : att.path) || '';
   return `/api/media/${encodeURI(p)}`;
 }
 
 function mediaFallbacks(att) {
-  return (att.paths || [att.path]).filter(Boolean).map(p => `/api/media/${encodeURI(p)}`);
+  const urls = [];
+  if (att.attachment_id != null) {
+    urls.push(`/api/media/attachment/${att.attachment_id}`);
+  }
+  for (const p of (att.paths || [att.path]).filter(Boolean)) {
+    const u = `/api/media/${encodeURI(p)}`;
+    if (!urls.includes(u)) urls.push(u);
+  }
+  return urls;
 }
 
 // Navigation

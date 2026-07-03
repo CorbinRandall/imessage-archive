@@ -157,6 +157,7 @@ def chat_messages(chat_id: int, limit: int = 500, offset: int = 0) -> list[dict[
 
 
 def resolve_media_path(relative: str) -> Path | None:
+    """Resolve a stored relative path to an on-disk file. Never guesses by filename alone."""
     rel = relative.lstrip("/")
     candidates = [DATA_DIR / rel, RAW_DIR / rel.removeprefix("raw/"), HTML_DIR / rel.removeprefix("html-export/")]
 
@@ -168,12 +169,34 @@ def resolve_media_path(relative: str) -> Path | None:
             continue
         if resolved.exists() and resolved.is_file():
             return resolved
+    return None
 
-    name = Path(relative).name
-    for root in (HTML_ATTACHMENTS_DIR, ATTACHMENTS_DIR):
-        if not root.exists():
-            continue
-        for path in root.glob(f"**/{name}"):
+
+@lru_cache(maxsize=2)
+def _attachment_paths_cached(mtime: float) -> dict[int, list[str]]:
+    """Map attachment_id -> ordered candidate paths (from JSONL export)."""
+    index: dict[int, list[str]] = {}
+    for msg in _messages_cached(mtime):
+        for att in msg.get("attachments") or []:
+            att_id = att.get("attachment_id")
+            if att_id is None:
+                continue
+            paths = att.get("paths") or ([att["path"]] if att.get("path") else [])
+            # Later messages win for the same id (shouldn't happen, but be safe).
+            index[int(att_id)] = paths
+    return index
+
+
+def resolve_media_by_attachment_id(attachment_id: int) -> Path | None:
+    """Resolve media using the unique attachment ROWID — avoids filename collisions."""
+    paths = _attachment_paths_cached(_jsonl_mtime()).get(attachment_id, [])
+    for rel in paths:
+        resolved = resolve_media_path(rel)
+        if resolved:
+            return resolved
+    # Html-export files are named {attachment_id}.{ext}
+    if HTML_ATTACHMENTS_DIR.exists():
+        for path in HTML_ATTACHMENTS_DIR.rglob(f"{attachment_id}.*"):
             if path.is_file():
                 return path
     return None
@@ -204,6 +227,7 @@ def media_gallery(kind: str = "all", limit: int = 200, offset: int = 0) -> dict[
                 "mime_type": mime,
                 "path": att.get("path"),
                 "paths": att.get("paths") or [att.get("path")],
+                "attachment_id": att.get("attachment_id"),
                 "chat": msg.get("chat"),
                 "chat_id": msg.get("chat_id"),
                 "sender": msg.get("sender"),
@@ -259,3 +283,4 @@ def invalidate_caches() -> None:
     _stats_cache = {"at": 0.0, "data": {}}
     _messages_cached.cache_clear()
     _contacts_data.cache_clear()
+    _attachment_paths_cached.cache_clear()

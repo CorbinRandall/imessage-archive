@@ -153,6 +153,23 @@ def get_html_export(filename: str) -> FileResponse:
     return FileResponse(path)
 
 
+@app.get("/api/media/attachment/{attachment_id:int}")
+def get_media_by_attachment_id(attachment_id: int) -> FileResponse:
+    resolved = archive.resolve_media_by_attachment_id(attachment_id)
+    if not resolved:
+        raise HTTPException(404, "Media not found")
+    if resolved.suffix.lower() in {".heic", ".heif", ".tif", ".tiff"}:
+        converted = archive.convert_image_for_web(resolved)
+        if converted:
+            return FileResponse(converted, media_type="image/jpeg")
+    if resolved.suffix.lower() == ".caf":
+        converted = archive.convert_audio_for_web(resolved)
+        if converted:
+            return FileResponse(converted, media_type="audio/mp4")
+    media_type, _ = mimetypes.guess_type(str(resolved))
+    return FileResponse(resolved, media_type=media_type or "application/octet-stream")
+
+
 @app.get("/api/media/{path:path}")
 def get_media(path: str) -> FileResponse:
     resolved = archive.resolve_media_path(path)

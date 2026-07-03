@@ -189,6 +189,8 @@ def load_all_attachments(conn: sqlite3.Connection, messages_root: Path, html_ind
                     pass
         if not paths:
             continue
+        # Prefer html-export (attachment-id filenames) over raw GUID paths — both are unique.
+        paths.sort(key=lambda p: (0 if p.startswith("html-export/") else 1, p))
         by_message.setdefault(message_id, []).append({
             "name": transfer,
             "mime_type": mime,
