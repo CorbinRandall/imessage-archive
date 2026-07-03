@@ -162,6 +162,10 @@ def get_media(path: str) -> FileResponse:
         converted = archive.convert_image_for_web(resolved)
         if converted:
             return FileResponse(converted, media_type="image/jpeg")
+    if resolved.suffix.lower() == ".caf":
+        converted = archive.convert_audio_for_web(resolved)
+        if converted:
+            return FileResponse(converted, media_type="audio/mp4")
     media_type, _ = mimetypes.guess_type(str(resolved))
     return FileResponse(resolved, media_type=media_type or "application/octet-stream")
 

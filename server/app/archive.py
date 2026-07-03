@@ -42,6 +42,29 @@ def convert_image_for_web(source: Path) -> Path | None:
         return None
 
 
+def convert_audio_for_web(source: Path) -> Path | None:
+    """Transcode CAF (Apple voice messages) to M4A for browser playback, cached on disk."""
+    import hashlib
+    import subprocess
+
+    _MEDIA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha1(f"{source}:{source.stat().st_mtime_ns}".encode()).hexdigest()
+    cached = _MEDIA_CACHE_DIR / f"{key}.m4a"
+    if cached.exists():
+        return cached
+    tmp = cached.with_suffix(".tmp.m4a")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(source), "-c:a", "aac", "-b:a", "96k", str(tmp)],
+            check=True, capture_output=True, timeout=120,
+        )
+        tmp.rename(cached)
+        return cached
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        return None
+
+
 def _normalize_phone(value: str) -> str:
     digits = re.sub(r"\D", "", value or "")
     if len(digits) == 11 and digits.startswith("1"):

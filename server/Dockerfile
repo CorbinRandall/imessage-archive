@@ -5,6 +5,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# ffmpeg for transcoding CAF voice messages to browser-playable M4A
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+
 COPY app/ ./app/
 
 # Let onnxruntime-gpu find the pip-installed CUDA/cuDNN shared libraries.
