@@ -115,7 +115,8 @@ input[type="search"], input[type="text"], input[type="number"], select {
 
 /* ===== Search / schedules ===== */
 .search-row { display: flex; gap: .75rem; margin-bottom: 1rem; }
-#search-q, #chat-filter { flex: 1; }
+#search-q { flex: 1; }
+#chat-filter { flex: 0 0 auto; }
 .result { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; margin-bottom: .6rem; }
 .schedule-editor { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; margin-top: 1rem; }
 .schedules-table { width: 100%; border-collapse: collapse; }
