@@ -4,7 +4,9 @@ services:
     container_name: imessage-qdrant
     restart: unless-stopped
     volumes:
-      - ${APP_PATH:-/mnt/user/appdata/imessage-archive}/qdrant:/qdrant/storage
+      # Must be a direct disk path (/mnt/cache), NOT /mnt/user: Unraid's FUSE
+      # layer breaks Qdrant's mmap writes and silently zeroes stored vectors.
+      - ${QDRANT_PATH:-/mnt/cache/appdata/imessage-archive/qdrant}:/qdrant/storage
     ports:
       - "6333:6333"
     networks:
