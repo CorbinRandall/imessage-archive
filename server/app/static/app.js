@@ -168,9 +168,9 @@ function renderBubbleMedia(attachments) {
     if (mime.startsWith('image/') || /\.(jpe?g|png|gif|heic|webp)$/i.test(name))
       return `<div class="msg-media" onclick="openLightbox('${url}','image','${esc(name)}')"><img src="${url}" alt="${esc(name)}" loading="lazy" ${fallback} /></div>`;
     if (mime.startsWith('video/') || /\.(mp4|mov|m4v)$/i.test(name))
-      return `<div class="msg-media"><video src="${url}" controls preload="metadata"></video></div>`;
+      return `<div class="msg-media"><video src="${url}" controls preload="metadata" onerror="this.closest('.msg-media')?.remove()"></video></div>`;
     if (mime.startsWith('audio/') || /\.(m4a|caf|mp3|aac|wav)$/i.test(name))
-      return `<audio src="${url}" controls preload="none"></audio>`;
+      return `<audio src="${url}" controls preload="none" onerror="this.remove()"></audio>`;
     return `<a class="file-link" href="${url}" target="_blank">&#128206; ${esc(name || 'Attachment')}</a>`;
   }).join('');
 }
@@ -207,13 +207,19 @@ window.openChat = async (chatId) => {
   let html = '';
   let lastDay = '';
   let lastSender = null;
+  let lastTs = 0;
   for (const m of msgs) {
     const day = (m.date || '').slice(0, 10);
+    const ts = m.date ? Date.parse(m.date) : 0;
     if (day !== lastDay) {
-      html += `<div class="day-divider">${esc(fmtDay(m.date))}</div>`;
+      html += `<div class="day-divider">${esc(fmtDay(m.date))} · ${esc(fmtMsgTime(m.date))}</div>`;
       lastDay = day;
       lastSender = null;
+    } else if (ts && lastTs && ts - lastTs > 3600_000) {
+      html += `<div class="day-divider">${esc(fmtMsgTime(m.date))}</div>`;
+      lastSender = null;
     }
+    lastTs = ts;
     const side = m.is_from_me ? 'me' : 'them';
     const senderChanged = m.sender !== lastSender;
     const showSender = m.is_group && !m.is_from_me && senderChanged;
@@ -227,7 +233,7 @@ window.openChat = async (chatId) => {
       html += `<div class="reply-quote">${esc(origin.sender)}: ${esc(origin.text.slice(0, 80))}${origin.text.length > 80 ? '…' : ''}</div>`;
     }
     if (m.text) {
-      html += `<div class="bubble ${isSms ? 'sms' : ''}">${linkify(m.text)}${m.edited ? '<span class="edited-tag">(edited)</span>' : ''}</div>`;
+      html += `<div class="bubble ${isSms ? 'sms' : ''}" title="${esc(fmtDay(m.date))} ${esc(fmtMsgTime(m.date))}">${linkify(m.text)}${m.edited ? '<span class="edited-tag">(edited)</span>' : ''}</div>`;
     }
     html += renderBubbleMedia(m.attachments);
     html += renderReactions(m.reactions);
@@ -266,7 +272,7 @@ async function loadMedia(reset = false) {
     const fallback = urls[1] ? `onerror="if(this.src!=='${urls[1]}'){this.src='${urls[1]}';}else{this.closest('.media-cell')?.remove();}"` : `onerror="this.closest('.media-cell')?.remove()"`;
     if (item.kind === 'video')
       return `<div class="media-cell" onclick="openLightbox('${url}','video','${esc(caption)}')">
-        <video src="${url}#t=0.5" preload="metadata" muted></video>
+        <video src="${url}#t=0.5" preload="metadata" muted onerror="this.closest('.media-cell')?.remove()"></video>
         <span class="badge">&#9654; video</span>
         <div class="cell-meta">${esc(caption)}</div>
       </div>`;

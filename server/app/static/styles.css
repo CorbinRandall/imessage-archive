@@ -55,7 +55,10 @@ input[type="search"], input[type="text"], input[type="number"], select {
 
 /* ===== Messages view (iMessage style) ===== */
 .browse-layout { display: grid; grid-template-columns: 300px 1fr; gap: 0; height: calc(100vh - 2.5rem); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--panel); }
-.chat-pane { display: flex; flex-direction: column; border-right: 1px solid var(--border); min-width: 0; }
+/* min-height: 0 is required: grid items default to min-height auto, so the long
+   chat list would blow the pane out to content height and get clipped away. */
+.browse-layout > * { min-height: 0; }
+.chat-pane { display: flex; flex-direction: column; border-right: 1px solid var(--border); min-width: 0; overflow: hidden; }
 .chat-pane input { margin: .75rem; flex-shrink: 0; }
 .chat-list { overflow-y: auto; flex: 1; }
 .chat-item { padding: .75rem 1rem; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; gap: .75rem; align-items: center; }
@@ -64,7 +67,7 @@ input[type="search"], input[type="text"], input[type="number"], select {
 .chat-item-body { min-width: 0; flex: 1; }
 .chat-item .title { font-weight: 600; font-size: .92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat-item .meta { color: var(--muted); font-size: .78rem; margin-top: .15rem; }
-.detail-pane { display: flex; flex-direction: column; min-width: 0; }
+.detail-pane { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 .chat-header { padding: .85rem 1.25rem; border-bottom: 1px solid var(--border); font-weight: 600; flex-shrink: 0; min-height: 1.2rem; }
 .chat-header .sub { font-weight: 400; color: var(--muted); font-size: .8rem; margin-top: .15rem; }
 .chat-detail { overflow-y: auto; flex: 1; padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: 2px; }

@@ -23,6 +23,15 @@ static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
+@app.middleware("http")
+async def static_cache_control(request, call_next):
+    """Force revalidation of UI assets so browsers never run stale JS/CSS."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.on_event("startup")
 def startup() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
