@@ -209,6 +209,7 @@ window.openChat = async (chatId) => {
   let lastSender = null;
   let lastTs = 0;
   for (const m of msgs) {
+    if (!m.text && !(m.attachments || []).length && !(m.reactions || []).length) continue;
     const day = (m.date || '').slice(0, 10);
     const ts = m.date ? Date.parse(m.date) : 0;
     if (day !== lastDay) {
@@ -241,6 +242,12 @@ window.openChat = async (chatId) => {
   }
   detail.innerHTML = html;
   detail.scrollTop = detail.scrollHeight;
+  // Late-loading media shifts layout; keep pinned to bottom unless the user scrolled up.
+  const repin = () => {
+    if (detail.scrollHeight - detail.scrollTop - detail.clientHeight < 800) detail.scrollTop = detail.scrollHeight;
+  };
+  detail.querySelectorAll('img').forEach(el => el.addEventListener('load', repin));
+  detail.querySelectorAll('video').forEach(el => el.addEventListener('loadedmetadata', repin));
 };
 
 // ===== Media tab =====
