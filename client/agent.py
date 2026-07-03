@@ -96,29 +96,32 @@ def run_backup(server: str, token: str, triggered_by: str, schedule_id: str | No
         return
 
     report_status(server, token, run_id, status="running", phase="export", message="Starting backup")
-  env = os.environ.copy()
-  env["SERVER_URL"] = server
-  env["CLIENT_TOKEN"] = token
-  env["BACKUP_RUN_ID"] = run_id
-  env["PATH"] = os.pathsep.join([
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
+    env = os.environ.copy()
+    env["SERVER_URL"] = server
+    env["CLIENT_TOKEN"] = token
+    env["BACKUP_RUN_ID"] = run_id
+    env["PATH"] = os.pathsep.join([
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
         str(Path.home() / "bin"),
         env.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
-  ])
-  try:
-    proc = subprocess.run(["/bin/bash", str(script)], env=env, capture_output=True, text=True)
-    if proc.returncode == 0:
-      report_status(server, token, run_id, status="success", phase="done", message="Backup completed")
-      print("Backup completed successfully")
-    else:
-      msg = (proc.stderr or proc.stdout or "").strip()
-      if not msg:
-        msg = f"export-and-sync.sh exited with code {proc.returncode} (no output — check Full Disk Access for /usr/bin/python3)"
-      else:
-        msg = msg[-2000:]
-      report_status(server, token, run_id, status="error", phase="failed", message=msg)
-      print(f"Backup failed: {msg}", file=sys.stderr)
+    ])
+    try:
+        proc = subprocess.run(["/bin/bash", str(script)], env=env, capture_output=True, text=True)
+        if proc.returncode == 0:
+            report_status(server, token, run_id, status="success", phase="done", message="Backup completed")
+            print("Backup completed successfully")
+        else:
+            msg = (proc.stderr or proc.stdout or "").strip()
+            if not msg:
+                msg = (
+                    f"export-and-sync.sh exited with code {proc.returncode} "
+                    "(no output — check Full Disk Access for /usr/bin/python3)"
+                )
+            else:
+                msg = msg[-2000:]
+            report_status(server, token, run_id, status="error", phase="failed", message=msg)
+            print(f"Backup failed: {msg}", file=sys.stderr)
     except Exception as exc:  # noqa: BLE001
         report_status(server, token, run_id, status="error", message=str(exc))
 

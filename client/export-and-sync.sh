@@ -47,9 +47,13 @@ ensure_mount() {
 
 check_full_disk_access() {
   if ! imessage-exporter -d >/dev/null 2>&1; then
-    log "ERROR: Full Disk Access required for Terminal."
+    log "ERROR: Full Disk Access required."
+    log "  Add these in System Settings → Privacy & Security → Full Disk Access:"
+    log "    • /usr/bin/python3  (background backup agent)"
+    log "    • /opt/homebrew/bin/imessage-exporter"
+    log "  Terminal also needs FDA if you run backups manually."
     open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" || true
-    report "error" "preflight" "Full Disk Access required"
+    report "error" "preflight" "Full Disk Access required for /usr/bin/python3 and imessage-exporter"
     exit 1
   fi
 }
