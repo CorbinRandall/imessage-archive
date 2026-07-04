@@ -137,12 +137,20 @@ def upload_file(base: str, api_key: str, path: Path, client_id: str, checksum: s
     return None
 
 
-def ensure_album(base: str, api_key: str, name: str) -> str:
-    albums = api_json(f"{base}/albums", api_key)
-    if isinstance(albums, list):
-        for alb in albums:
-            if (alb.get("albumName") or alb.get("name")) == name:
-                return alb["id"]
+def ensure_album(base: str, api_key: str, name: str, album_id: str = "") -> str | None:
+    if album_id:
+        return album_id
+    try:
+        albums = api_json(f"{base}/albums", api_key)
+        if isinstance(albums, list):
+            for alb in albums:
+                if (alb.get("albumName") or alb.get("name")) == name:
+                    return alb["id"]
+    except urllib.error.HTTPError as exc:
+        if exc.code not in (403, 404):
+            raise
+        log(f"NOTE: album list unavailable (HTTP {exc.code}); creating album '{name}'")
+
     created = api_json(f"{base}/albums", api_key, "POST", {"albumName": name, "description": "iMessage attachments"})
     return created["id"]
 
@@ -150,7 +158,11 @@ def ensure_album(base: str, api_key: str, name: str) -> str:
 def add_to_album(base: str, api_key: str, album_id: str, asset_ids: list[str]) -> None:
     for i in range(0, len(asset_ids), BATCH):
         batch = asset_ids[i : i + BATCH]
-        api_json(f"{base}/albums/{album_id}/assets", api_key, "PUT", {"ids": batch})
+        try:
+            api_json(f"{base}/albums/{album_id}/assets", api_key, "PUT", {"ids": batch})
+        except urllib.error.HTTPError as exc:
+            log(f"WARN album add batch {i // BATCH + 1}: HTTP {exc.code}")
+            raise
 
 
 def main() -> int:
@@ -161,6 +173,7 @@ def main() -> int:
     parser.add_argument("--immich-url", default="http://192.168.1.200:8090")
     parser.add_argument("--api-key", required=True)
     parser.add_argument("--album", default="iMessage")
+    parser.add_argument("--album-id", default="", help="Existing Immich album ID (skips album list)")
     parser.add_argument("--map-file", default="", help="Optional sidecar JSON map attachment_id->asset_id")
     args = parser.parse_args()
 
@@ -228,11 +241,13 @@ def main() -> int:
 
         if action == "duplicate" and asset_id:
             att["immich_asset_id"] = asset_id
+            uploaded_ids.append(asset_id)
             patched += 1
             continue
 
         if action == "reject" and row.get("reason") == "duplicate" and asset_id:
             att["immich_asset_id"] = asset_id
+            uploaded_ids.append(asset_id)
             patched += 1
             continue
 
@@ -249,9 +264,13 @@ def main() -> int:
                 log(f"  … uploaded {patched}/{len(work)}")
 
     if uploaded_ids:
-        album_id = ensure_album(base, args.api_key, args.album)
-        add_to_album(base, args.api_key, album_id, uploaded_ids)
-        log(f"Added {len(uploaded_ids)} assets to album '{args.album}'")
+        try:
+            album_id = ensure_album(base, args.api_key, args.album, args.album_id)
+            if album_id:
+                add_to_album(base, args.api_key, album_id, uploaded_ids)
+                log(f"Added {len(uploaded_ids)} assets to album '{args.album}'")
+        except Exception as exc:
+            log(f"WARN: album step failed ({exc}); assets are still in Immich library")
 
     # Rewrite JSONL
     with jsonl_path.open("w", encoding="utf-8") as out:
