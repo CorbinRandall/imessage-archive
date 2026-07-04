@@ -6,11 +6,16 @@ import argparse
 import hashlib
 import json
 import mimetypes
-import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+try:
+    import requests
+except ImportError:
+    requests = None  # type: ignore
 
 DEVICE_ID = "imessage-archive"
 BATCH = 100
@@ -88,48 +93,48 @@ def bulk_check(base: str, api_key: str, items: list[tuple[str, str]]) -> dict[st
 
 
 def upload_file(base: str, api_key: str, path: Path, client_id: str, checksum: str) -> str | None:
-    import uuid
-
-    boundary = f"----imessage{uuid.uuid4().hex}"
     filename = path.name
-    mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    now = iso_now()
+    st = path.stat()
+    now = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    headers = {
+        "Accept": "application/json",
+        "x-api-key": api_key,
+        "x-immich-checksum": checksum,
+    }
+    data = {
+        "fileCreatedAt": now,
+        "fileModifiedAt": now,
+        "filename": filename,
+        "deviceId": DEVICE_ID,
+        "deviceAssetId": client_id,
+    }
 
-    parts: list[bytes] = []
-    for key, val in [
-        ("fileCreatedAt", now),
-        ("fileModifiedAt", now),
-        ("filename", filename),
-        ("deviceId", DEVICE_ID),
-        ("deviceAssetId", client_id),
-    ]:
-        parts.append(f"--{boundary}\r\n".encode())
-        parts.append(f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode())
-        parts.append(f"{val}\r\n".encode())
-
-    parts.append(f"--{boundary}\r\n".encode())
-    parts.append(
-        f'Content-Disposition: form-data; name="assetData"; filename="{filename}"\r\n'.encode()
-    )
-    parts.append(f"Content-Type: {mime}\r\n\r\n".encode())
-    parts.append(path.read_bytes())
-    parts.append(f"\r\n--{boundary}--\r\n".encode())
-    body = b"".join(parts)
-
-    req = urllib.request.Request(f"{base}/assets", data=body, method="POST")
-    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
-    req.add_header("x-api-key", api_key)
-    req.add_header("x-immich-checksum", checksum)
-    req.add_header("Accept", "application/json")
-
-    try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            data = json.loads(resp.read().decode())
-            return data.get("id") or data.get("asset", {}).get("id")
-    except urllib.error.HTTPError as exc:
-        err = exc.read().decode()[:500]
-        log(f"WARN upload {filename}: HTTP {exc.code} {err}")
+    if requests is None:
+        log("ERROR: requests library required for uploads (pip install requests)")
         return None
+
+    for attempt in range(3):
+        try:
+            with path.open("rb") as fh:
+                resp = requests.post(
+                    f"{base}/assets",
+                    headers=headers,
+                    data=data,
+                    files={"assetData": (filename, fh, mimetypes.guess_type(filename)[0] or "application/octet-stream")},
+                    timeout=600,
+                )
+            if resp.ok:
+                body = resp.json()
+                return body.get("id") or body.get("asset", {}).get("id")
+            log(f"WARN upload {filename}: HTTP {resp.status_code} {resp.text[:500]}")
+            return None
+        except requests.RequestException as exc:
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            log(f"WARN upload {filename}: {exc}")
+            return None
+    return None
 
 
 def ensure_album(base: str, api_key: str, name: str) -> str:
