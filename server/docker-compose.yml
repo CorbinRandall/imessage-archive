@@ -32,9 +32,6 @@ services:
       BATCH_SIZE: "256"
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
-      IMMICH_URL: ${IMMICH_URL:-http://192.168.1.200:8090}
-      IMMICH_API_KEY: ${IMMICH_API_KEY:-}
-      IMMICH_ALBUM: ${IMMICH_ALBUM:-iMessage}
     volumes:
       - ${DATA_PATH:-/mnt/user/Misc/imessage-backup}:/data:ro
       - ${APP_PATH:-/mnt/user/appdata/imessage-archive}/state:/state
