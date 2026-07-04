@@ -100,6 +100,8 @@ def upload_file(base: str, api_key: str, path: Path, client_id: str, checksum: s
         ("fileCreatedAt", now),
         ("fileModifiedAt", now),
         ("filename", filename),
+        ("deviceId", DEVICE_ID),
+        ("deviceAssetId", client_id),
     ]:
         parts.append(f"--{boundary}\r\n".encode())
         parts.append(f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode())
@@ -233,6 +235,8 @@ def main() -> int:
             att["immich_asset_id"] = asset_id
             uploaded_ids.append(asset_id)
             patched += 1
+            if patched % 25 == 0:
+                log(f"  … uploaded {patched}/{len(work)}")
 
     if uploaded_ids:
         album_id = ensure_album(base, args.api_key, args.album)
