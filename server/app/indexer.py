@@ -3,10 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import threading
 import time
-from pathlib import Path
 from typing import Any
 
 from fastembed import TextEmbedding
@@ -15,7 +13,7 @@ from qdrant_client.http import models as qmodels
 
 logger = logging.getLogger(__name__)
 
-from app.config import BATCH_SIZE, COLLECTION, DATA_DIR, EMBED_MODEL, JSONL_PATH, QDRANT_URL
+from app.config import BATCH_SIZE, COLLECTION, EMBED_MODEL, JSONL_PATH, QDRANT_URL
 
 _index_lock = threading.Lock()
 _index_state: dict[str, Any] = {

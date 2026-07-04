@@ -9,7 +9,7 @@ import mimetypes
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 try:
@@ -46,7 +46,7 @@ def sha1_file(path: Path) -> str:
 
 
 def iso_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def resolve_file(att: dict, html_attachments: Path, raw_root: Path) -> Path | None:
@@ -95,7 +95,7 @@ def bulk_check(base: str, api_key: str, items: list[tuple[str, str]]) -> dict[st
 def upload_file(base: str, api_key: str, path: Path, client_id: str, checksum: str) -> str | None:
     filename = path.name
     st = path.stat()
-    now = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    now = datetime.fromtimestamp(st.st_mtime, tz=UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     headers = {
         "Accept": "application/json",
         "x-api-key": api_key,

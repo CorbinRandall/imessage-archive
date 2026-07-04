@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import mimetypes
 import threading
 from pathlib import Path
 from typing import Any
@@ -12,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app import archive, db, immich_client, scheduler
-from app.config import DATA_DIR, HTML_DIR, IMMICH_ALBUM, IMMICH_URL, JSONL_PATH, STATE_DIR
+from app.config import HTML_DIR, IMMICH_ALBUM, IMMICH_URL, JSONL_PATH, STATE_DIR
 from app.indexer import _index_state, indexer
 
 logging.basicConfig(level=logging.INFO)

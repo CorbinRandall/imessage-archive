@@ -1,7 +1,57 @@
+# Secrets and local config
 .env
-*.log
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets/
+
+# Python
 __pycache__/
-*.pyc
-.DS_Store
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime / data (server and client)
 qdrant/
+state/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# Node (if added later)
 node_modules/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Docker / local overrides
+docker-compose.override.yml
+
+# Client export artifacts (never commit message data)
+imessage-export/

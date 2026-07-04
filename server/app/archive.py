@@ -7,7 +7,17 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from app.config import ATTACHMENTS_DIR, CONTACTS_PATH, DATA_DIR, HTML_ATTACHMENTS_DIR, HTML_DIR, IMMICH_API_KEY, IMMICH_URL, JSONL_PATH, RAW_DIR, STATE_DIR
+from app.config import (
+    CONTACTS_PATH,
+    DATA_DIR,
+    HTML_ATTACHMENTS_DIR,
+    HTML_DIR,
+    IMMICH_API_KEY,
+    IMMICH_URL,
+    JSONL_PATH,
+    RAW_DIR,
+    STATE_DIR,
+)
 
 _stats_cache: dict[str, Any] = {"at": 0.0, "data": {}}
 _STATS_TTL = 60.0
@@ -51,8 +61,8 @@ def _cache_key(source: Path, label: str) -> Path:
 
 def _convert_image_pillow(source: Path, dest: Path, max_size: int) -> bool:
     try:
-        from PIL import Image
         import pillow_heif
+        from PIL import Image
 
         pillow_heif.register_heif_opener()
     except ImportError:

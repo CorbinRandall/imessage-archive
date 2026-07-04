@@ -1,0 +1,19 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+src = ["server", "client"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = [
+  "B008",  # FastAPI Depends() in defaults
+  "B007",  # unused loop control vars in legacy export code
+  "B905",  # zip() strict= — legacy indexer
+  "E402",  # deferred imports in indexer (logger first)
+  "E501",  # line length — tighten gradually
+  "E702",  # legacy semicolon style in db.py
+]
+
+[tool.pytest.ini_options]
+testpaths = ["server/tests"]
+pythonpath = ["server"]

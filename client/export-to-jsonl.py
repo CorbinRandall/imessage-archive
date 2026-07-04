@@ -12,7 +12,7 @@ import json
 import re
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 TAPBACK_EMOJI = {
@@ -37,7 +37,7 @@ def apple_time_to_iso(raw: int | None) -> str | None:
         seconds = raw / 1_000_000
     else:
         seconds = float(raw)
-    return datetime.fromtimestamp(978307200 + seconds, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(978307200 + seconds, tz=UTC).isoformat()
 
 
 def decode_attributed_body(data: bytes | None) -> str | None:

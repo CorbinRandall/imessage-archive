@@ -1,0 +1,52 @@
+---
+name: Bug report
+description: Something isn't working
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please avoid pasting message content or API keys.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `imessage-backup`
+        2. Open Browse tab
+        3. See error ...
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Mac client / agent
+        - Server / Docker
+        - Immich integration
+        - Search / Qdrant
+        - Web UI
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: macOS version, Docker image tag, Immich version (if relevant)
+      placeholder: macOS 15.x, main @ abc1234, Immich 2.5
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Redact tokens, hostnames, and personal data.
+      render: shell
