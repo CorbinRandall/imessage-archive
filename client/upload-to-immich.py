@@ -231,8 +231,13 @@ def main() -> int:
             patched += 1
             continue
 
+        if action == "reject" and row.get("reason") == "duplicate" and asset_id:
+            att["immich_asset_id"] = asset_id
+            patched += 1
+            continue
+
         if action == "reject":
-            log(f"WARN rejected {path.name}")
+            log(f"WARN rejected {path.name}: {row.get('reason', 'unknown')}")
             continue
 
         asset_id = upload_file(base, args.api_key, path, client_id, checksum)
