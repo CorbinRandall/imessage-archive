@@ -19,6 +19,8 @@ services:
       context: ${APP_PATH:-/mnt/user/appdata/imessage-archive}/server
     restart: unless-stopped
     runtime: nvidia
+    env_file:
+      - ${APP_PATH:-/mnt/user/appdata/imessage-archive}/.env
     depends_on:
       - qdrant
     environment:
