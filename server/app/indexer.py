@@ -101,6 +101,14 @@ class MessageIndexer:
         return f"Chat: {chat}\nParticipants: {participants}\nFrom: {sender}\n{text}"
 
     def index_all(self) -> dict[str, Any]:
+        return self.index_messages(self.load_messages())
+
+    def index_by_ids(self, ids: list[str]) -> dict[str, Any]:
+        wanted = set(ids)
+        messages = [m for m in self.load_messages() if str(m.get("id") or "") in wanted]
+        return self.index_messages(messages)
+
+    def index_messages(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         with _index_lock:
             if _index_state["running"]:
                 return {"status": "already_running", **_index_state}
@@ -110,7 +118,6 @@ class MessageIndexer:
             _index_state["indexed"] = 0
 
         try:
-            messages = self.load_messages()
             _index_state["total"] = len(messages)
             if not messages:
                 return {"status": "no_data", "message": f"No messages at {JSONL_PATH}"}
@@ -129,7 +136,7 @@ class MessageIndexer:
 
                 vectors = self.embed(batch_texts)
                 points = []
-                for msg, vector in zip(batch_msgs, vectors):
+                for msg, vector in zip(batch_msgs, vectors, strict=False):
                     point_id = _point_id(str(msg.get("id") or f"{msg.get('chat_id')}:{msg.get('message_id')}"))
                     points.append(
                         qmodels.PointStruct(

@@ -183,6 +183,20 @@ def main() -> int:
         if map_path.exists():
             sidecar = {str(k): v for k, v in json.loads(map_path.read_text()).items()}
 
+    # Always stamp Immich IDs from the sidecar onto the working JSONL first.
+    stamped = 0
+    for msg in messages:
+        for att in msg.get("attachments") or []:
+            att_id = att.get("attachment_id")
+            if att_id is None:
+                continue
+            mapped = sidecar.get(str(att_id))
+            if mapped and not att.get("immich_asset_id"):
+                att["immich_asset_id"] = mapped
+                stamped += 1
+    if stamped:
+        log(f"Stamped {stamped} immich_asset_id values from map sidecar")
+
     # Collect work items
     work: list[tuple[dict, dict, Path, str, str]] = []  # msg, att, path, client_id, checksum
     seen_ids: set[str] = set()
@@ -194,6 +208,8 @@ def main() -> int:
             if att_id is None:
                 continue
             if att.get("immich_asset_id") or sidecar.get(str(att_id)):
+                if sidecar.get(str(att_id)) and not att.get("immich_asset_id"):
+                    att["immich_asset_id"] = sidecar[str(att_id)]
                 continue
             client_id = f"imessage:{att_id}"
             if client_id in seen_ids:
@@ -207,7 +223,20 @@ def main() -> int:
     log(f"Immich upload: {len(work)} new media files to process")
 
     if not work:
-        log("Nothing to upload")
+        log("Nothing to upload — rewriting JSONL with stamped map IDs")
+        with jsonl_path.open("w", encoding="utf-8") as out:
+            for msg in messages:
+                out.write(json.dumps(msg, ensure_ascii=False) + "\n")
+        if args.map_file:
+            map_path = Path(args.map_file).expanduser()
+            map_path.parent.mkdir(parents=True, exist_ok=True)
+            for msg in messages:
+                for att in msg.get("attachments") or []:
+                    aid = att.get("attachment_id")
+                    iid = att.get("immich_asset_id")
+                    if aid is not None and iid:
+                        sidecar[str(aid)] = iid
+            map_path.write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
         return 0
 
     checks = bulk_check(base, args.api_key, [(w[3], w[4]) for w in work])

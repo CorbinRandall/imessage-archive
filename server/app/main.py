@@ -95,6 +95,7 @@ class BackupStartRequest(BaseModel):
 
 class IndexRequest(BaseModel):
     full: bool = True
+    ids: list[str] = Field(default_factory=list)
 
 
 # --- UI ---
@@ -225,11 +226,14 @@ def start_index(req: IndexRequest) -> dict[str, Any]:
         return {"status": "already_running", "index": _index_state}
 
     def run() -> None:
-        indexer.index_all()
+        if req.full or not req.ids:
+            indexer.index_all()
+        else:
+            indexer.index_by_ids(req.ids)
 
     threading.Thread(target=run, daemon=True).start()
     archive.invalidate_caches()
-    return {"status": "started", "full": req.full}
+    return {"status": "started", "full": req.full, "id_count": 0 if req.full else len(req.ids)}
 
 
 @app.get("/search")

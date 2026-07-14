@@ -241,6 +241,12 @@ def main() -> int:
     parser.add_argument("--messages-root", default=str(Path.home() / "Library/Messages"))
     parser.add_argument("--contacts", default="")
     parser.add_argument("--html-dir", default="")
+    parser.add_argument(
+        "--since-rowid",
+        type=int,
+        default=0,
+        help="Only export messages with ROWID > N (plus reaction/edit refreshed parents)",
+    )
     args = parser.parse_args()
 
     db_path = Path(args.db).expanduser()
@@ -269,24 +275,84 @@ def main() -> int:
     ):
         chat_participants.setdefault(chat_id, []).append(handle)
 
-    query = """
-        SELECT m.ROWID AS message_id, m.guid, m.text, m.attributedBody, m.is_from_me,
-               m.date, m.service, m.associated_message_type, m.balloon_bundle_id,
-               m.thread_originator_guid, m.date_edited, m.date_retracted,
-               h.id AS sender_handle,
-               c.ROWID AS chat_id, c.chat_identifier, c.display_name, c.style
-        FROM message m
-        JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
-        JOIN chat c ON c.ROWID = cmj.chat_id
-        LEFT JOIN handle h ON h.ROWID = m.handle_id
-        WHERE m.associated_message_type NOT BETWEEN 2000 AND 3999
-        ORDER BY m.date ASC
-    """
+    since = int(args.since_rowid or 0)
+    refresh_ids: set[int] = set()
+    if since > 0:
+        guid_to_rowid = {
+            str(g): int(rid)
+            for g, rid in conn.execute("SELECT guid, ROWID FROM message WHERE guid IS NOT NULL")
+        }
+        for assoc_guid, in conn.execute(
+            """
+            SELECT associated_message_guid FROM message
+            WHERE ROWID > ?
+              AND associated_message_type BETWEEN 2000 AND 3999
+              AND associated_message_guid IS NOT NULL
+            """,
+            (since,),
+        ):
+            target = assoc_guid.split("/")[-1] if "/" in assoc_guid else assoc_guid.removeprefix("bp:")
+            mid = guid_to_rowid.get(target)
+            if mid is not None and mid <= since:
+                refresh_ids.add(mid)
+
+    if since > 0:
+        if refresh_ids:
+            placeholders = ",".join("?" for _ in refresh_ids)
+            query = f"""
+                SELECT m.ROWID AS message_id, m.guid, m.text, m.attributedBody, m.is_from_me,
+                       m.date, m.service, m.associated_message_type, m.balloon_bundle_id,
+                       m.thread_originator_guid, m.date_edited, m.date_retracted,
+                       h.id AS sender_handle,
+                       c.ROWID AS chat_id, c.chat_identifier, c.display_name, c.style
+                FROM message m
+                JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+                JOIN chat c ON c.ROWID = cmj.chat_id
+                LEFT JOIN handle h ON h.ROWID = m.handle_id
+                WHERE m.associated_message_type NOT BETWEEN 2000 AND 3999
+                  AND (m.ROWID > ? OR m.ROWID IN ({placeholders}))
+                ORDER BY m.date ASC
+            """
+            params: list[int] = [since, *sorted(refresh_ids)]
+        else:
+            query = """
+                SELECT m.ROWID AS message_id, m.guid, m.text, m.attributedBody, m.is_from_me,
+                       m.date, m.service, m.associated_message_type, m.balloon_bundle_id,
+                       m.thread_originator_guid, m.date_edited, m.date_retracted,
+                       h.id AS sender_handle,
+                       c.ROWID AS chat_id, c.chat_identifier, c.display_name, c.style
+                FROM message m
+                JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+                JOIN chat c ON c.ROWID = cmj.chat_id
+                LEFT JOIN handle h ON h.ROWID = m.handle_id
+                WHERE m.associated_message_type NOT BETWEEN 2000 AND 3999
+                  AND m.ROWID > ?
+                ORDER BY m.date ASC
+            """
+            params = [since]
+        print(f"Incremental export since ROWID {since} (+{len(refresh_ids)} refresh parents)")
+    else:
+        query = """
+            SELECT m.ROWID AS message_id, m.guid, m.text, m.attributedBody, m.is_from_me,
+                   m.date, m.service, m.associated_message_type, m.balloon_bundle_id,
+                   m.thread_originator_guid, m.date_edited, m.date_retracted,
+                   h.id AS sender_handle,
+                   c.ROWID AS chat_id, c.chat_identifier, c.display_name, c.style
+            FROM message m
+            JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+            JOIN chat c ON c.ROWID = cmj.chat_id
+            LEFT JOIN handle h ON h.ROWID = m.handle_id
+            WHERE m.associated_message_type NOT BETWEEN 2000 AND 3999
+            ORDER BY m.date ASC
+        """
+        params = []
+
 
     count = 0
     skipped = 0
+    max_rowid = since
     with out_path.open("w", encoding="utf-8") as out:
-        for row in conn.execute(query):
+        for row in conn.execute(query, params):
             text = str(row["text"]).strip() if row["text"] else ""
             if not text:
                 text = decode_attributed_body(row["attributedBody"]) or ""
@@ -343,6 +409,7 @@ def main() -> int:
             }
             out.write(json.dumps(record, ensure_ascii=False) + "\n")
             count += 1
+            max_rowid = max(max_rowid, int(row["message_id"]))
 
     conn.close()
     print(
@@ -350,6 +417,7 @@ def main() -> int:
         f"{len(reactions_by_guid)} messages with reactions, "
         f"{len(resolver.raw)} contacts, {len(html_index)} html attachments) to {out_path}"
     )
+    print(f"MAX_ROWID={max_rowid}")
     return 0
 
 

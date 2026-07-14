@@ -202,7 +202,10 @@ async function loadDashboard() {
           <span class="status-dot ${isOnline(c.last_seen_at) ? 'online' : 'offline'}"></span>
           <strong>${esc(c.name)}</strong>
         </div>
-        <button class="btn small" onclick="triggerBackup('${c.id}')">Backup now</button>
+        <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+          <button class="btn small" onclick="triggerBackup('${c.id}')">Backup now</button>
+          ${(c.last_status === 'running' || c.trigger_pending) ? `<button class="btn small secondary" onclick="stopBackup('${c.id}')">Stop</button>` : ''}
+        </div>
       </div>
       <div class="muted" style="margin-top:.5rem;font-size:.85rem">
         Last seen: ${fmtTime(c.last_seen_at)} · Last backup: ${fmtTime(c.last_backup_at)}
@@ -226,6 +229,11 @@ $('#btn-copy-mac-setup')?.addEventListener('click', copyMacSetupPrompt);
 
 window.triggerBackup = async (id) => {
   await api(`/api/clients/${id}/backup/trigger`, { method: 'POST' });
+  loadDashboard();
+};
+
+window.stopBackup = async (id) => {
+  await api(`/api/clients/${id}/backup/stop`, { method: 'POST' });
   loadDashboard();
 };
 

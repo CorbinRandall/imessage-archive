@@ -203,6 +203,9 @@ def print_status_block(server: str, name: str, st: dict, fda_msg: str) -> None:
     if st.get("error"):
         print(f"  Error       : {red(st['error'])}")
     print()
+    print(dim("Tip: imessage-archive backup  → live Immich/rsync progress"))
+    print(dim("     Dashboard Stop cancels Backup now / scheduled runs"))
+    print()
 
 
 def cmd_status(watch: bool = False) -> int:
