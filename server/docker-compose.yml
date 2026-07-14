@@ -24,6 +24,8 @@ services:
     depends_on:
       - qdrant
     environment:
+      # Schedules use datetime.now() — must match wall clock the UI implies (PDT/PST).
+      TZ: America/Los_Angeles
       DATA_DIR: /data
       STATE_DIR: /state
       QDRANT_URL: http://qdrant:6333

@@ -103,7 +103,81 @@ $$('.nav').forEach(btn => btn.onclick = () => {
 });
 
 // ===== Dashboard =====
+function buildMacSetupPrompt() {
+  const serverUrl = window.location.origin.replace(/\/$/, '');
+  let host = window.location.hostname || '192.168.1.200';
+  try { host = new URL(serverUrl).hostname; } catch (_) { /* keep fallback */ }
+  return `Set up THIS Mac as an iMessage Archive backup client for ${serverUrl}.
+
+Goal: install the Mac client so this computer registers automatically and appears under "Mac Clients" on the dashboard at ${serverUrl}. Prefer the one-stop Mac app when possible:
+
+  open ${serverUrl}/download/mac-client.zip
+  # Unzip → open "iMessage Archive.app" → Grant Permissions → wait until Connected
+
+Or do a manual/scripted install on THIS Mac (local shell). Do NOT SSH into Unraid and do NOT redeploy or restart the Docker stack.
+
+Manual steps (if not using the .app):
+1. Ensure Homebrew is installed (\`brew --version\`). If missing, install it from https://brew.sh.
+2. Run the official client installer:
+   curl -fsSL https://raw.githubusercontent.com/CorbinRandall/imessage-archive/main/scripts/install-client.sh | bash
+3. Edit ~/.config/imessage-archive.env (created by the installer) so these values are set:
+   SERVER_URL=${serverUrl}
+   SEARCH_API=${serverUrl}
+   UNRAID_HOST=${host}
+   UNRAID_SHARE=Misc
+   MOUNT_POINT=$HOME/mnt/unraid-imessage
+   LOCAL_EXPORT=$HOME/imessage-export
+   COPY_METHOD=full
+   Optional: CLIENT_NAME=<friendly display name for this Mac>
+   Optional Immich media upload: IMMICH_URL=http://${host}:8090 and IMMICH_API_KEY=<key from Immich>
+   Optional SMB auth if guest mount fails: SMB_USER / SMB_PASS
+4. Confirm the launchd agent is loaded:
+   launchctl list | grep imessage-archive
+   If missing: launchctl load ~/Library/LaunchAgents/com.imessage-archive.agent.plist
+5. Force a registration/heartbeat so this Mac shows up on the dashboard immediately:
+   python3 ~/.local/imessage-archive/client/agent.py --once
+   Then verify: curl -fsS ${serverUrl}/api/clients | python3 -m json.tool
+   This Mac's hostname (or CLIENT_NAME) must appear in clients[].
+6. Full Disk Access is required for backups (you cannot grant this programmatically). Tell the user to open System Settings → Privacy & Security → Full Disk Access and enable:
+   • /usr/bin/python3  (background agent)
+   • /opt/homebrew/bin/imessage-exporter  (or /usr/local/bin/imessage-exporter on Intel Macs)
+   • Terminal and/or Cursor if they will run manual backups
+7. After FDA is granted, optionally run \`imessage-backup\`, or have the user click "Backup now" for this Mac on the dashboard. Then open Schedules on ${serverUrl} and set weekdays/time if desired.
+
+Success criteria: this Mac appears under Mac Clients on ${serverUrl} (green/online within ~2 minutes of heartbeats). Report config path, agent status, and registration result.`;
+}
+
+function refreshMacSetupPrompt() {
+  const el = $('#mac-setup-prompt');
+  if (el) el.textContent = buildMacSetupPrompt();
+}
+
+async function copyMacSetupPrompt() {
+  const text = buildMacSetupPrompt();
+  const btn = $('#btn-copy-mac-setup');
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  if (btn) {
+    const prev = btn.textContent;
+    btn.textContent = 'Copied';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = prev;
+      btn.classList.remove('copied');
+    }, 1600);
+  }
+}
+
 async function loadDashboard() {
+  refreshMacSetupPrompt();
   const [stats, clients, immich] = await Promise.all([
     api('/api/stats'),
     api('/api/clients'),
@@ -147,6 +221,8 @@ async function loadDashboard() {
     </div>
   `).join('') || '<p class="muted">No backups yet.</p>';
 }
+
+$('#btn-copy-mac-setup')?.addEventListener('click', copyMacSetupPrompt);
 
 window.triggerBackup = async (id) => {
   await api(`/api/clients/${id}/backup/trigger`, { method: 'POST' });
@@ -409,7 +485,7 @@ function scheduleEditorHtml(schedule = null) {
       `<button type="button" class="day-btn ${days.includes(i) ? 'on' : ''}" data-day="${i}">${d}</button>`
     ).join('')}</div>
     <div class="time-row">
-      <label>Time
+      <label>Time (Pacific)
         <input type="number" id="ed-hour" min="0" max="23" value="${schedule?.hour ?? 18}" style="width:4rem" /> :
         <input type="number" id="ed-minute" min="0" max="59" value="${schedule?.minute ?? 0}" style="width:4rem" />
       </label>

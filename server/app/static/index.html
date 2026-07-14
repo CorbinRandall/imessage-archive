@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>iMessage Archive</title>
-  <link rel="stylesheet" href="/static/styles.css?v=6" />
+  <link rel="stylesheet" href="/static/styles.css?v=9" />
 </head>
 <body>
   <div class="app">
@@ -29,6 +29,22 @@
         <div class="cards" id="stat-cards"></div>
         <h2>Mac Clients</h2>
         <div id="clients-list" class="clients-list"></div>
+        <div class="setup-panel" id="mac-setup-panel">
+          <div class="setup-panel-head">
+            <div>
+              <strong>Add a Mac</strong>
+              <p class="muted setup-blurb">Download the Mac app — it opens <strong>Terminal</strong> with live status (connected / backing up / disconnected). Run <code>imessage-archive backup</code> for a progress bar through export, Immich upload, and sync.</p>
+            </div>
+            <a class="btn small" id="btn-download-mac" href="/download/mac-client.zip">Download Mac App</a>
+          </div>
+          <details class="setup-advanced">
+            <summary>Or set up with an agent / Cursor</summary>
+            <div class="setup-advanced-body">
+              <button type="button" id="btn-copy-mac-setup" class="btn small secondary">Copy for agent</button>
+              <pre id="mac-setup-prompt" class="setup-prompt" tabindex="0"></pre>
+            </div>
+          </details>
+        </div>
         <h2>Recent Backups</h2>
         <div id="runs-list" class="runs-list"></div>
       </section>
@@ -67,7 +83,7 @@
           <h1>Backup Schedules</h1>
           <button id="btn-new-schedule" class="btn">+ New schedule</button>
         </header>
-        <p class="muted">Mac agents poll the server every 60s and run backups when a schedule is due.</p>
+        <p class="muted">Mac agents poll every 60s. Schedule times are <strong>America/Los_Angeles</strong> (server local). If the Mac was asleep at the exact minute, the next heartbeat that day still catches up once.</p>
         <div id="schedules-list"></div>
         <div id="schedule-editor" class="schedule-editor hidden"></div>
       </section>
@@ -81,6 +97,6 @@
     <div id="lightbox-caption" class="lightbox-caption"></div>
   </div>
 
-  <script src="/static/app.js?v=9"></script>
+  <script src="/static/app.js?v=12"></script>
 </body>
 </html>

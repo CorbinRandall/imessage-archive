@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.imessage-archive.agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>PYTHON</string>
+    <string>HOME/.local/imessage-archive/client/agent.py</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:HOME/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>CONFIG_FILE</key>
+    <string>HOME/.config/imessage-archive.env</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>HOME/imessage-export/agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>HOME/imessage-export/agent.err</string>
+</dict>
+</plist>

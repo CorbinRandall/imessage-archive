@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS pending_triggers (
     created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS pending_cancels (
+    client_id TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE,
+    created_at REAL NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_schedules_client ON schedules(client_id);
 """
 
@@ -252,7 +257,16 @@ def mark_schedule_run(schedule_id: str) -> None:
 
 def queue_trigger(client_id: str) -> None:
     with connect() as conn:
-        conn.execute("INSERT OR REPLACE INTO pending_triggers (client_id, created_at) VALUES (?, ?)", (client_id, time.time()))
+        conn.execute("DELETE FROM pending_cancels WHERE client_id = ?", (client_id,))
+        conn.execute(
+            "INSERT OR REPLACE INTO pending_triggers (client_id, created_at) VALUES (?, ?)",
+            (client_id, time.time()),
+        )
+
+
+def clear_trigger(client_id: str) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM pending_triggers WHERE client_id = ?", (client_id,))
 
 
 def pop_trigger(client_id: str) -> bool:
@@ -264,10 +278,69 @@ def pop_trigger(client_id: str) -> bool:
         return False
 
 
+def request_cancel(client_id: str) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM pending_triggers WHERE client_id = ?", (client_id,))
+        conn.execute(
+            "INSERT OR REPLACE INTO pending_cancels (client_id, created_at) VALUES (?, ?)",
+            (client_id, time.time()),
+        )
+
+
+def pop_cancel(client_id: str) -> bool:
+    with connect() as conn:
+        row = conn.execute("SELECT 1 FROM pending_cancels WHERE client_id = ?", (client_id,)).fetchone()
+        if row:
+            conn.execute("DELETE FROM pending_cancels WHERE client_id = ?", (client_id,))
+            return True
+        return False
+
+
+def cancel_running_runs(client_id: str, message: str = "Stopped from dashboard") -> int:
+    now = time.time()
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE backup_runs
+            SET status = 'error', phase = 'cancelled', message = ?, finished_at = ?
+            WHERE client_id = ? AND status = 'running'
+            """,
+            (message, now, client_id),
+        )
+        return int(cur.rowcount)
+
+
+def get_backup_run(run_id: str) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM backup_runs WHERE id = ?", (run_id,)).fetchone()
+        return dict(row) if row else None
+
+
+# Ignore zombie "running" rows older than this so stuck dashboard state
+# cannot permanently suppress schedules (single-flight only covers live work).
+ACTIVE_BACKUP_MAX_AGE_SECONDS = 6 * 3600
+
+
+def client_has_active_run(client_id: str, max_age_seconds: float = ACTIVE_BACKUP_MAX_AGE_SECONDS) -> bool:
+    """True when this client has a recent backup_run still marked running."""
+    cutoff = time.time() - max_age_seconds
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM backup_runs
+            WHERE client_id = ? AND status = 'running' AND started_at >= ?
+            LIMIT 1
+            """,
+            (client_id, cutoff),
+        ).fetchone()
+        return row is not None
+
+
 def create_backup_run(client_id: str, triggered_by: str, schedule_id: str | None = None) -> str:
     run_id = str(uuid.uuid4())
     now = time.time()
     with connect() as conn:
+        conn.execute("DELETE FROM pending_cancels WHERE client_id = ?", (client_id,))
         conn.execute(
             "INSERT INTO backup_runs (id, client_id, schedule_id, status, phase, message, started_at, triggered_by) VALUES (?, ?, ?, 'running', 'starting', '', ?, ?)",
             (run_id, client_id, schedule_id, now, triggered_by),
@@ -275,8 +348,18 @@ def create_backup_run(client_id: str, triggered_by: str, schedule_id: str | None
     return run_id
 
 
-def update_backup_run(run_id: str, status: str | None = None, phase: str | None = None, message: str | None = None) -> None:
+def update_backup_run(run_id: str, status: str | None = None, phase: str | None = None, message: str | None = None) -> bool:
+    """Update a run. Returns False if ignored (finished/cancelled runs are immutable)."""
     with connect() as conn:
+        row = conn.execute(
+            "SELECT status, finished_at, phase FROM backup_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        if not row:
+            return False
+        # Dashboard Stop (or prior finish) wins — ignore late Mac status updates.
+        if row["finished_at"] is not None:
+            return False
         fields, values = [], []
         if status is not None:
             fields.append("status = ?"); values.append(status)
@@ -287,9 +370,10 @@ def update_backup_run(run_id: str, status: str | None = None, phase: str | None 
         if status in ("success", "error"):
             fields.append("finished_at = ?"); values.append(time.time())
         if not fields:
-            return
+            return True
         values.append(run_id)
         conn.execute(f"UPDATE backup_runs SET {', '.join(fields)} WHERE id = ?", values)
+        return True
 
 
 def list_backup_runs(limit: int = 50) -> list[dict[str, Any]]:

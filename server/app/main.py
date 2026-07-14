@@ -5,14 +5,15 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app import archive, db, immich_client, scheduler
 from app.config import HTML_DIR, IMMICH_ALBUM, IMMICH_URL, JSONL_PATH, STATE_DIR
 from app.indexer import _index_state, indexer
+from app.mac_client import build_mac_client_zip
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -101,6 +102,29 @@ class IndexRequest(BaseModel):
 @app.get("/")
 def home() -> FileResponse:
     return FileResponse(static_dir / "index.html")
+
+
+@app.get("/download/mac-client.zip")
+def download_mac_client(request: Request) -> Response:
+    """One-stop Mac app: status UI + permissions + background agent, SERVER_URL baked in."""
+    # Prefer the Host the browser used (LAN / Tailscale). Avoid baking loopback.
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    scheme = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
+    if host and not host.startswith("127.0.0.1") and not host.startswith("localhost"):
+        server_url = f"{scheme}://{host}".rstrip("/")
+    else:
+        server_url = str(request.base_url).rstrip("/")
+        if "127.0.0.1" in server_url or "localhost" in server_url:
+            server_url = "http://192.168.1.200:8095"
+    payload = build_mac_client_zip(server_url)
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="iMessage-Archive-Mac.zip"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @app.get("/health")
@@ -299,12 +323,37 @@ def mark_schedule_ran(schedule_id: str = Query(...)) -> dict[str, Any]:
 
 @app.post("/api/clients/{client_id}/backup/trigger")
 def trigger_backup(client_id: str) -> dict[str, Any]:
+    db.get_client(client_id) if hasattr(db, "get_client") else None
+    # list_clients / get by id — check how clients are fetched
+    clients = {c["id"]: c for c in db.list_clients()}
+    if client_id not in clients:
+        raise HTTPException(404, "Client not found")
     db.queue_trigger(client_id)
     return {"ok": True, "queued": True}
 
 
+@app.post("/api/clients/{client_id}/backup/stop")
+def stop_backup(client_id: str) -> dict[str, Any]:
+    """Stop running/queued backups for a Mac: clear queue, mark runs cancelled, signal agent."""
+    clients = {c["id"]: c for c in db.list_clients()}
+    if client_id not in clients:
+        raise HTTPException(404, "Client not found")
+    db.clear_trigger(client_id)
+    cancelled = db.cancel_running_runs(client_id, "Stopped from dashboard")
+    db.request_cancel(client_id)
+    return {"ok": True, "cancelled_runs": cancelled, "cancel_signaled": True}
+
+
+@app.post("/api/clients/backup/cancel-check")
+def cancel_check(client: dict[str, Any] = Depends(client_from_token)) -> dict[str, Any]:
+    """Mac agent polls this during a backup to honor dashboard Stop."""
+    return {"cancel": db.pop_cancel(client["id"])}
+
+
 @app.post("/api/clients/backup/start")
 def backup_start(req: BackupStartRequest, client: dict[str, Any] = Depends(client_from_token)) -> dict[str, Any]:
+    if db.pop_cancel(client["id"]):
+        raise HTTPException(409, "Backup cancelled")
     run_id = db.create_backup_run(client["id"], req.triggered_by, req.schedule_id)
     if req.schedule_id:
         db.mark_schedule_run(req.schedule_id)
@@ -313,5 +362,5 @@ def backup_start(req: BackupStartRequest, client: dict[str, Any] = Depends(clien
 
 @app.post("/api/clients/backup/status")
 def backup_status(req: BackupStatusUpdate, client: dict[str, Any] = Depends(client_from_token)) -> dict[str, Any]:
-    db.update_backup_run(req.run_id, req.status, req.phase, req.message)
-    return {"ok": True}
+    updated = db.update_backup_run(req.run_id, req.status, req.phase, req.message)
+    return {"ok": True, "updated": updated}
