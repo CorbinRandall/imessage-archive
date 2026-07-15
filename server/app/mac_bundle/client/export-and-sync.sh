@@ -153,7 +153,8 @@ PY
 
 export_messages() {
   mkdir -p "$LOCAL_EXPORT"/{html,raw,logs}
-  local logfile="$LOCAL_EXPORT/logs/$(date +%Y-%m-%d_%H%M%S).log"
+  local logfile
+  logfile="$LOCAL_EXPORT/logs/$(date +%Y-%m-%d_%H%M%S).log"
   local since_rowid=0
   local mode="full"
   NEW_IDS_FILE=""

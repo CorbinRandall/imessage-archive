@@ -1,7 +1,8 @@
-"""Build a downloadable macOS .app zip with SERVER_URL baked in."""
+"""Build downloadable Mac client packages (legacy .app zip + headless agent tarball)."""
 from __future__ import annotations
 
 import io
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -16,6 +17,7 @@ CLIENT_FILES = [
     "export-and-sync.sh",
     "export-contacts.py",
     "export-to-jsonl.py",
+    "merge-jsonl.py",
     "mount-share.sh",
     "upload-to-immich.py",
     "com.imessage-archive.agent.plist",
@@ -96,5 +98,33 @@ Commands after install:
         info = zipfile.ZipInfo("README.txt")
         info.external_attr = 0o644 << 16
         zf.writestr(info, readme.encode())
+
+    return buf.getvalue()
+
+
+def build_mac_agent_tarball() -> bytes:
+    """Tar.gz of client scripts + env.example for the one-liner Mac installer."""
+    if not CLIENT_DIR.is_dir():
+        raise FileNotFoundError(f"Mac client bundle missing at {CLIENT_DIR}")
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name in CLIENT_FILES:
+            src = CLIENT_DIR / name
+            if not src.exists():
+                continue
+            info = tarfile.TarInfo(name=f"imessage-archive/client/{name}")
+            data = src.read_bytes()
+            info.size = len(data)
+            info.mode = 0o755 if src.suffix in {".py", ".sh"} else 0o644
+            tar.addfile(info, io.BytesIO(data))
+
+        env_example = CONFIG_DIR / "env.example"
+        if env_example.exists():
+            data = env_example.read_bytes()
+            info = tarfile.TarInfo(name="imessage-archive/config/env.example")
+            info.size = len(data)
+            info.mode = 0o644
+            tar.addfile(info, io.BytesIO(data))
 
     return buf.getvalue()

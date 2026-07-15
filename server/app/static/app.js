@@ -118,9 +118,24 @@ function progressPct(done, total) {
   return Math.max(0, Math.min(100, Math.round((Number(done || 0) / Number(total)) * 100)));
 }
 
-function progressBarHtml(done, total, label = '') {
+function progressBarHtml(done, total, label = '', { indeterminate = false } = {}) {
   const pct = progressPct(done, total);
-  if (pct == null) return label ? `<div class="muted" style="margin-top:.35rem">${esc(label)}</div>` : '';
+  if (pct == null && !indeterminate) {
+    return label ? `<div class="muted" style="margin-top:.35rem">${esc(label)}</div>` : '';
+  }
+  if (pct == null && indeterminate) {
+    return `
+    <div class="progress-block">
+      <div class="progress-meta">
+        <span>Estimating size…</span>
+        <strong>—</strong>
+      </div>
+      <div class="progress-track indeterminate" aria-valuemin="0" aria-valuemax="100">
+        <div class="progress-fill"></div>
+      </div>
+      ${label ? `<div class="muted progress-label">${esc(label)}</div>` : ''}
+    </div>`;
+  }
   const doneLabel = fmtBytes(done);
   const totalLabel = fmtBytes(total);
   return `
@@ -175,20 +190,12 @@ async function copyText(text, btn) {
 
 function buildMacSetupPrompt() {
   const serverUrl = window.location.origin.replace(/\/$/, '');
-  let host = window.location.hostname || '192.168.1.200';
-  try { host = new URL(serverUrl).hostname; } catch (_) { /* keep fallback */ }
-  return `Set up THIS Mac as an iMessage Archive backup client for ${serverUrl}.
+  return `On THIS Mac (local Terminal only — not Unraid/Linux):
 
-Run ONLY on the Mac (local Terminal). Do NOT SSH into Unraid or paste this into Cursor on Linux.
+curl -fsSL ${serverUrl}/download/install-mac.sh | bash
 
-1. Install/update the headless agent:
-   curl -fsSL ${serverUrl}/download/install-mac.sh | bash
-2. Grant Full Disk Access (System Settings → Privacy & Security):
-   • /usr/bin/python3
-   • Homebrew imessage-exporter
-3. Confirm the Mac appears under Mac Clients at ${serverUrl}, then click Backup now.
-
-Config lives in ~/.config/imessage-archive.env (SERVER_URL=${serverUrl}, UNRAID_HOST=${host}, UNRAID_SHARE=Misc).`;
+Then grant Full Disk Access to /usr/bin/python3 and imessage-exporter.
+After that, use the dashboard at ${serverUrl} to start/stop backups and watch progress.`;
 }
 
 function refreshMacSetupPrompt() {
@@ -245,7 +252,7 @@ async function loadDashboard() {
         ${c.last_status ? ` · ${esc(c.last_status)}` : ''}
         ${c.trigger_pending ? ' · <strong style="color:var(--warn)">Backup queued</strong>' : ''}
       </div>
-      ${running ? progressBarHtml(progressSrc.bytes_done, progressSrc.bytes_total, progressLabel) : ''}
+      ${running ? progressBarHtml(progressSrc.bytes_done, progressSrc.bytes_total, progressLabel, { indeterminate: !progressSrc.bytes_total }) : ''}
     </div>`;
   }).join('') || '<p class="muted">No Mac clients registered yet. Use the install command below.</p>';
 
@@ -256,7 +263,7 @@ async function loadDashboard() {
       <strong>${esc(r.client_name)}</strong> · ${esc(r.status)} · ${esc(r.phase || '')}
       ${r.schedule_name ? ` · <em>${esc(r.schedule_name)}</em>` : ''}
       <span class="muted"> · ${fmtTime(r.started_at)} · ${esc(r.triggered_by)}</span>
-      ${showBar ? progressBarHtml(r.bytes_done, r.bytes_total, r.message || '') : (r.message ? `<div class="muted" style="margin-top:.3rem">${esc(r.message)}</div>` : '')}
+      ${showBar ? progressBarHtml(r.bytes_done, r.bytes_total, r.message || '', { indeterminate: r.status === 'running' && !r.bytes_total }) : (r.message ? `<div class="muted" style="margin-top:.3rem">${esc(r.message)}</div>` : '')}
     </div>`;
   }).join('') || '<p class="muted">No backups yet.</p>';
 }

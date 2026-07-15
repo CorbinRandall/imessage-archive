@@ -66,6 +66,14 @@ nav { display: flex; flex-direction: column; gap: .35rem; }
   background: linear-gradient(90deg, var(--accent2), var(--accent));
   transition: width .35s ease;
 }
+.progress-track.indeterminate .progress-fill {
+  width: 35%;
+  animation: progress-slide 1.2s ease-in-out infinite;
+}
+@keyframes progress-slide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
 .progress-label {
   margin-top: .35rem;
   font-size: .8rem;

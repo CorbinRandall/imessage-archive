@@ -257,12 +257,20 @@ def run_backup(server: str, token: str, triggered_by: str, schedule_id: str | No
             if not line:
                 continue
             with lock:
+                is_progress = bool(PROGRESS_LINE_RE.match(line))
+                is_rsync = bool(RSYNC_PROGRESS_RE.match(line))
+                is_immich = bool(IMMICH_PROGRESS_RE.search(line))
                 bd, bt, ph, msg = parse_progress_line(
                     line, bytes_done=bytes_done, bytes_total=bytes_total, phase=phase
                 )
-                bytes_done, bytes_total, phase = bd, bt, ph or phase
-                last_progress = msg[-PROGRESS_TAIL:]
-                maybe_report()
+                if is_progress or is_rsync or is_immich:
+                    bytes_done, bytes_total, phase = bd, bt, ph or phase
+                    last_progress = msg[-PROGRESS_TAIL:]
+                    maybe_report()
+                elif line.startswith("[") and "ERROR" in line:
+                    # Keep preflight / hard-failure log lines for the dashboard.
+                    last_progress = line[-PROGRESS_TAIL:]
+                    maybe_report(force=True)
 
     def cancel_watch(proc: subprocess.Popen) -> None:
         while not stop.wait(CANCEL_POLL_SECONDS):

@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from app import archive, db, immich_client, scheduler
 from app.config import HTML_DIR, IMMICH_ALBUM, IMMICH_URL, JSONL_PATH, STATE_DIR
 from app.indexer import _index_state, indexer
-from app.mac_client import build_mac_client_zip
+from app.mac_client import build_mac_agent_tarball, build_mac_client_zip
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -133,9 +133,23 @@ def download_mac_client(request: Request) -> Response:
     )
 
 
+@app.get("/download/mac-agent.tgz")
+def download_mac_agent_tarball() -> Response:
+    """Headless Mac agent bundle — used by /download/install-mac.sh."""
+    payload = build_mac_agent_tarball()
+    return Response(
+        content=payload,
+        media_type="application/gzip",
+        headers={
+            "Content-Disposition": 'attachment; filename="imessage-archive-mac-agent.tgz"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @app.get("/download/install-mac.sh")
 def download_install_mac(request: Request) -> Response:
-    """One-liner installer for a Mac: curl this | bash."""
+    """One-liner installer for a Mac: curl this | bash (no GitHub required)."""
     server_url = _request_server_url(request)
     host_header = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
     host = host_header.split(":")[0].strip() if host_header else ""
@@ -144,39 +158,88 @@ def download_install_mac(request: Request) -> Response:
     script = f'''#!/usr/bin/env bash
 set -euo pipefail
 # iMessage Archive — Mac installer (served by {server_url})
-export SERVER_URL="{server_url}"
-export SEARCH_API="{server_url}"
-export UNRAID_HOST="{host}"
-export REPO_URL="${{REPO_URL:-https://github.com/CorbinRandall/imessage-archive.git}}"
-export BRANCH="${{BRANCH:-feat/stop-progress-incremental}}"
-echo "==> Installing iMessage Archive client for $SERVER_URL"
-curl -fsSL "https://raw.githubusercontent.com/CorbinRandall/imessage-archive/$BRANCH/scripts/install-client.sh" | bash
-CFG="$HOME/.config/imessage-archive.env"
-mkdir -p "$(dirname "$CFG")"
-touch "$CFG"
+# Installs a headless agent. Control backups from the dashboard (start / progress / stop).
+
+SERVER_URL="{server_url}"
+SEARCH_API="{server_url}"
+UNRAID_HOST="{host}"
+INSTALL_DIR="${{INSTALL_DIR:-$HOME/.local/imessage-archive}}"
+CONFIG_FILE="$HOME/.config/imessage-archive.env"
+BIN_DIR="$HOME/bin"
+PYTHON="$(command -v python3 || true)"
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "ERROR: Run this on the Mac (local Terminal), not over SSH to Linux/Unraid."
+  exit 1
+fi
+if [[ -z "$PYTHON" ]]; then
+  echo "ERROR: python3 not found."
+  exit 1
+fi
+if ! command -v brew >/dev/null; then
+  echo "ERROR: Homebrew required. Install from https://brew.sh then re-run."
+  exit 1
+fi
+if ! command -v imessage-exporter >/dev/null; then
+  echo "==> Installing imessage-exporter..."
+  brew install imessage-exporter
+fi
+
+echo "==> Downloading agent from $SERVER_URL"
+TMP="$(mktemp -d)"
+cleanup() {{ rm -rf "$TMP"; }}
+trap cleanup EXIT
+curl -fsSL "$SERVER_URL/download/mac-agent.tgz" | tar -xz -C "$TMP"
+mkdir -p "$INSTALL_DIR" "$BIN_DIR" "$HOME/.config" "$HOME/mnt" "$HOME/imessage-export"
+rsync -a --delete "$TMP/imessage-archive/client/" "$INSTALL_DIR/client/"
+mkdir -p "$INSTALL_DIR/config"
+if [[ -f "$TMP/imessage-archive/config/env.example" ]]; then
+  cp "$TMP/imessage-archive/config/env.example" "$INSTALL_DIR/config/env.example"
+fi
+chmod +x "$INSTALL_DIR/client/"*.sh "$INSTALL_DIR/client/"*.py 2>/dev/null || true
+
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  if [[ -f "$INSTALL_DIR/config/env.example" ]]; then
+    cp "$INSTALL_DIR/config/env.example" "$CONFIG_FILE"
+  else
+    touch "$CONFIG_FILE"
+  fi
+fi
 set_kv() {{
   local k="$1" v="$2"
-  if grep -q "^${{k}}=" "$CFG" 2>/dev/null; then
-    sed -i.bak "s|^${{k}}=.*|${{k}}=${{v}}|" "$CFG" && rm -f "$CFG.bak"
+  [[ -n "$v" ]] || return 0
+  if grep -q "^${{k}}=" "$CONFIG_FILE" 2>/dev/null; then
+    sed -i.bak "s|^${{k}}=.*|${{k}}=${{v}}|" "$CONFIG_FILE" && rm -f "$CONFIG_FILE.bak"
   else
-    printf '%s=%s\\n' "$k" "$v" >> "$CFG"
+    printf '%s=%s\\n' "$k" "$v" >> "$CONFIG_FILE"
   fi
 }}
 set_kv SERVER_URL "$SERVER_URL"
 set_kv SEARCH_API "$SEARCH_API"
 set_kv UNRAID_HOST "$UNRAID_HOST"
 set_kv UNRAID_SHARE "${{UNRAID_SHARE:-Misc}}"
+
+ln -sf "$INSTALL_DIR/client/export-and-sync.sh" "$BIN_DIR/imessage-backup"
+ln -sf "$INSTALL_DIR/client/mount-share.sh" "$BIN_DIR/imessage-mount"
+[[ -f "$INSTALL_DIR/client/cli.py" ]] && ln -sf "$INSTALL_DIR/client/cli.py" "$BIN_DIR/imessage-archive"
+
 PLIST="$HOME/Library/LaunchAgents/com.imessage-archive.agent.plist"
-if [[ -f "$PLIST" ]]; then
-  launchctl unload "$PLIST" 2>/dev/null || true
-  launchctl load "$PLIST" 2>/dev/null || true
-  launchctl kickstart -k "gui/$(id -u)/com.imessage-archive.agent" 2>/dev/null || true
-fi
+mkdir -p "$(dirname "$PLIST")"
+sed -e "s|HOME|$HOME|g" -e "s|PYTHON|$PYTHON|g" \\
+  "$INSTALL_DIR/client/com.imessage-archive.agent.plist" > "$PLIST"
+launchctl unload "$PLIST" 2>/dev/null || true
+launchctl load "$PLIST"
+launchctl kickstart -k "gui/$(id -u)/com.imessage-archive.agent" 2>/dev/null || true
+launchctl unload "$HOME/Library/LaunchAgents/com.imessage-archive.backup.plist" 2>/dev/null || true
+
 echo ""
-echo "Next: grant Full Disk Access (System Settings → Privacy & Security):"
-echo "  • /usr/bin/python3"
-echo "  • imessage-exporter (Homebrew)"
-echo "Then open the dashboard and click Backup now: $SERVER_URL"
+echo "Installed. One remaining Mac step — Full Disk Access:"
+echo "  System Settings → Privacy & Security → Full Disk Access"
+echo "  Enable:  $PYTHON"
+echo "  Enable:  $(command -v imessage-exporter)"
+echo ""
+echo "Then open the dashboard and click Backup now:"
+echo "  $SERVER_URL"
 open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 2>/dev/null || true
 '''
     return Response(
@@ -187,7 +250,6 @@ open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 
             "Cache-Control": "no-store",
         },
     )
-
 
 @app.get("/health")
 def health() -> dict[str, Any]:
