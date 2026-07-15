@@ -102,8 +102,114 @@ $$('.nav').forEach(btn => btn.onclick = () => {
   if (btn.dataset.view === 'dashboard') loadDashboard();
 });
 
+function fmtBytes(n) {
+  if (n == null || Number.isNaN(Number(n))) return '';
+  const v = Number(n);
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let x = Math.max(0, v);
+  let i = 0;
+  while (x >= 1024 && i < units.length - 1) { x /= 1024; i += 1; }
+  const digits = i === 0 ? 0 : (x >= 10 ? 0 : 1);
+  return `${x.toFixed(digits)} ${units[i]}`;
+}
+
+function progressPct(done, total) {
+  if (!total || total <= 0) return null;
+  return Math.max(0, Math.min(100, Math.round((Number(done || 0) / Number(total)) * 100)));
+}
+
+function progressBarHtml(done, total, label = '', { indeterminate = false } = {}) {
+  const pct = progressPct(done, total);
+  if (pct == null && !indeterminate) {
+    return label ? `<div class="muted" style="margin-top:.35rem">${esc(label)}</div>` : '';
+  }
+  if (pct == null && indeterminate) {
+    return `
+    <div class="progress-block">
+      <div class="progress-meta">
+        <span>Estimating size…</span>
+        <strong>—</strong>
+      </div>
+      <div class="progress-track indeterminate" aria-valuemin="0" aria-valuemax="100">
+        <div class="progress-fill"></div>
+      </div>
+      ${label ? `<div class="muted progress-label">${esc(label)}</div>` : ''}
+    </div>`;
+  }
+  const doneLabel = fmtBytes(done);
+  const totalLabel = fmtBytes(total);
+  return `
+    <div class="progress-block">
+      <div class="progress-meta">
+        <span>${doneLabel} / ${totalLabel}</span>
+        <strong>${pct}%</strong>
+      </div>
+      <div class="progress-track" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}">
+        <div class="progress-fill" style="width:${pct}%"></div>
+      </div>
+      ${label ? `<div class="muted progress-label">${esc(label)}</div>` : ''}
+    </div>`;
+}
+
+function activeRunForClient(clientId, runs) {
+  return (runs || []).find(r => r.client_id === clientId && r.status === 'running') || null;
+}
+
 // ===== Dashboard =====
+function buildMacInstallCmd() {
+  const serverUrl = window.location.origin.replace(/\/$/, '');
+  return `curl -fsSL ${serverUrl}/download/install-mac.sh | bash`;
+}
+
+function refreshMacInstallCmd() {
+  const el = $('#mac-install-cmd');
+  if (el) el.textContent = buildMacInstallCmd();
+}
+
+async function copyText(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  if (btn) {
+    const prev = btn.textContent;
+    btn.textContent = 'Copied';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = prev;
+      btn.classList.remove('copied');
+    }, 1600);
+  }
+}
+
+function buildMacSetupPrompt() {
+  const serverUrl = window.location.origin.replace(/\/$/, '');
+  return `On THIS Mac (local Terminal only — not Unraid/Linux):
+
+curl -fsSL ${serverUrl}/download/install-mac.sh | bash
+
+Then grant Full Disk Access to /usr/bin/python3 and imessage-exporter.
+After that, use the dashboard at ${serverUrl} to start/stop backups and watch progress.`;
+}
+
+function refreshMacSetupPrompt() {
+  const el = $('#mac-setup-prompt');
+  if (el) el.textContent = buildMacSetupPrompt();
+}
+
+async function copyMacSetupPrompt() {
+  await copyText(buildMacSetupPrompt(), $('#btn-copy-mac-setup'));
+}
+
 async function loadDashboard() {
+  refreshMacInstallCmd();
+  refreshMacSetupPrompt();
   const [stats, clients, immich] = await Promise.all([
     api('/api/stats'),
     api('/api/clients'),
@@ -121,35 +227,57 @@ async function loadDashboard() {
   `;
   $('#sidebar-stats').innerHTML = `${a.message_count || 0} msgs · ${a.contact_count || 0} contacts`;
 
-  $('#clients-list').innerHTML = (clients.clients || []).map(c => `
+  const runs = clients.runs || [];
+  $('#clients-list').innerHTML = (clients.clients || []).map(c => {
+    const active = activeRunForClient(c.id, runs);
+    const running = !!(active || c.last_status === 'running' || c.trigger_pending);
+    const progressSrc = active || {};
+    const progressLabel = active
+      ? (active.message || active.phase || 'Backing up…')
+      : (c.trigger_pending ? 'Backup queued — waiting for Mac agent' : '');
+    return `
     <div class="client-card">
       <div class="client-head">
         <div>
           <span class="status-dot ${isOnline(c.last_seen_at) ? 'online' : 'offline'}"></span>
           <strong>${esc(c.name)}</strong>
         </div>
-        <button class="btn small" onclick="triggerBackup('${c.id}')">Backup now</button>
+        <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+          <button class="btn small" onclick="triggerBackup('${c.id}')" ${running ? 'disabled' : ''}>Backup now</button>
+          ${running ? `<button class="btn small secondary" onclick="stopBackup('${c.id}')">Stop</button>` : ''}
+        </div>
       </div>
       <div class="muted" style="margin-top:.5rem;font-size:.85rem">
         Last seen: ${fmtTime(c.last_seen_at)} · Last backup: ${fmtTime(c.last_backup_at)}
         ${c.last_status ? ` · ${esc(c.last_status)}` : ''}
         ${c.trigger_pending ? ' · <strong style="color:var(--warn)">Backup queued</strong>' : ''}
       </div>
-    </div>
-  `).join('') || '<p class="muted">No Mac clients registered yet.</p>';
+      ${running ? progressBarHtml(progressSrc.bytes_done, progressSrc.bytes_total, progressLabel, { indeterminate: !progressSrc.bytes_total }) : ''}
+    </div>`;
+  }).join('') || '<p class="muted">No Mac clients registered yet. Use the install command below.</p>';
 
-  $('#runs-list').innerHTML = (clients.runs || []).map(r => `
+  $('#runs-list').innerHTML = runs.map(r => {
+    const showBar = r.status === 'running' || (r.bytes_total && r.bytes_done != null);
+    return `
     <div class="run-row">
       <strong>${esc(r.client_name)}</strong> · ${esc(r.status)} · ${esc(r.phase || '')}
       ${r.schedule_name ? ` · <em>${esc(r.schedule_name)}</em>` : ''}
       <span class="muted"> · ${fmtTime(r.started_at)} · ${esc(r.triggered_by)}</span>
-      ${r.message ? `<div class="muted" style="margin-top:.3rem">${esc(r.message)}</div>` : ''}
-    </div>
-  `).join('') || '<p class="muted">No backups yet.</p>';
+      ${showBar ? progressBarHtml(r.bytes_done, r.bytes_total, r.message || '', { indeterminate: r.status === 'running' && !r.bytes_total }) : (r.message ? `<div class="muted" style="margin-top:.3rem">${esc(r.message)}</div>` : '')}
+    </div>`;
+  }).join('') || '<p class="muted">No backups yet.</p>';
 }
+
+$('#btn-copy-mac-setup')?.addEventListener('click', copyMacSetupPrompt);
+$('#btn-copy-install')?.addEventListener('click', () => copyText(buildMacInstallCmd(), $('#btn-copy-install')));
 
 window.triggerBackup = async (id) => {
   await api(`/api/clients/${id}/backup/trigger`, { method: 'POST' });
+  loadDashboard();
+};
+
+window.stopBackup = async (id) => {
+  await api(`/api/clients/${id}/backup/stop`, { method: 'POST' });
   loadDashboard();
 };
 
@@ -409,7 +537,7 @@ function scheduleEditorHtml(schedule = null) {
       `<button type="button" class="day-btn ${days.includes(i) ? 'on' : ''}" data-day="${i}">${d}</button>`
     ).join('')}</div>
     <div class="time-row">
-      <label>Time
+      <label>Time (Pacific)
         <input type="number" id="ed-hour" min="0" max="23" value="${schedule?.hour ?? 18}" style="width:4rem" /> :
         <input type="number" id="ed-minute" min="0" max="59" value="${schedule?.minute ?? 0}" style="width:4rem" />
       </label>
@@ -471,5 +599,6 @@ window.deleteSchedule = async (id) => {
 
 loadDashboard();
 setInterval(() => {
-  if ($('#view-dashboard').classList.contains('active')) loadDashboard();
-}, 15000);
+  if (!$('#view-dashboard').classList.contains('active')) return;
+  loadDashboard();
+}, 3000);

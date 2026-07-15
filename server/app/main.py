@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import logging
-import mimetypes
 import threading
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app import archive, db, immich_client, scheduler
-from app.config import DATA_DIR, HTML_DIR, IMMICH_ALBUM, IMMICH_URL, JSONL_PATH, STATE_DIR
+from app.config import HTML_DIR, IMMICH_ALBUM, IMMICH_URL, JSONL_PATH, STATE_DIR
 from app.indexer import _index_state, indexer
+from app.mac_client import build_mac_agent_tarball, build_mac_client_zip
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -86,6 +86,8 @@ class BackupStatusUpdate(BaseModel):
     status: str | None = None
     phase: str | None = None
     message: str | None = None
+    bytes_done: int | None = None
+    bytes_total: int | None = None
 
 
 class BackupStartRequest(BaseModel):
@@ -95,6 +97,7 @@ class BackupStartRequest(BaseModel):
 
 class IndexRequest(BaseModel):
     full: bool = True
+    ids: list[str] = Field(default_factory=list)
 
 
 # --- UI ---
@@ -103,6 +106,150 @@ class IndexRequest(BaseModel):
 def home() -> FileResponse:
     return FileResponse(static_dir / "index.html")
 
+
+def _request_server_url(request: Request) -> str:
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    scheme = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
+    if host and not host.startswith("127.0.0.1") and not host.startswith("localhost"):
+        return f"{scheme}://{host}".rstrip("/")
+    server_url = str(request.base_url).rstrip("/")
+    if "127.0.0.1" in server_url or "localhost" in server_url:
+        return "http://192.168.1.200:8095"
+    return server_url
+
+
+@app.get("/download/mac-client.zip")
+def download_mac_client(request: Request) -> Response:
+    """Legacy Mac .app zip (advanced). Prefer /download/install-mac.sh."""
+    server_url = _request_server_url(request)
+    payload = build_mac_client_zip(server_url)
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="iMessage-Archive-Mac.zip"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.get("/download/mac-agent.tgz")
+def download_mac_agent_tarball() -> Response:
+    """Headless Mac agent bundle — used by /download/install-mac.sh."""
+    payload = build_mac_agent_tarball()
+    return Response(
+        content=payload,
+        media_type="application/gzip",
+        headers={
+            "Content-Disposition": 'attachment; filename="imessage-archive-mac-agent.tgz"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.get("/download/install-mac.sh")
+def download_install_mac(request: Request) -> Response:
+    """One-liner installer for a Mac: curl this | bash (no GitHub required)."""
+    server_url = _request_server_url(request)
+    host_header = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
+    host = host_header.split(":")[0].strip() if host_header else ""
+    if not host or host in ("127.0.0.1", "localhost"):
+        host = "192.168.1.200"
+    script = f'''#!/usr/bin/env bash
+set -euo pipefail
+# iMessage Archive — Mac installer (served by {server_url})
+# Installs a headless agent. Control backups from the dashboard (start / progress / stop).
+
+SERVER_URL="{server_url}"
+SEARCH_API="{server_url}"
+UNRAID_HOST="{host}"
+INSTALL_DIR="${{INSTALL_DIR:-$HOME/.local/imessage-archive}}"
+CONFIG_FILE="$HOME/.config/imessage-archive.env"
+BIN_DIR="$HOME/bin"
+PYTHON="$(command -v python3 || true)"
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "ERROR: Run this on the Mac (local Terminal), not over SSH to Linux/Unraid."
+  exit 1
+fi
+if [[ -z "$PYTHON" ]]; then
+  echo "ERROR: python3 not found."
+  exit 1
+fi
+if ! command -v brew >/dev/null; then
+  echo "ERROR: Homebrew required. Install from https://brew.sh then re-run."
+  exit 1
+fi
+if ! command -v imessage-exporter >/dev/null; then
+  echo "==> Installing imessage-exporter..."
+  brew install imessage-exporter
+fi
+
+echo "==> Downloading agent from $SERVER_URL"
+TMP="$(mktemp -d)"
+cleanup() {{ rm -rf "$TMP"; }}
+trap cleanup EXIT
+curl -fsSL "$SERVER_URL/download/mac-agent.tgz" | tar -xz -C "$TMP"
+mkdir -p "$INSTALL_DIR" "$BIN_DIR" "$HOME/.config" "$HOME/mnt" "$HOME/imessage-export"
+rsync -a --delete "$TMP/imessage-archive/client/" "$INSTALL_DIR/client/"
+mkdir -p "$INSTALL_DIR/config"
+if [[ -f "$TMP/imessage-archive/config/env.example" ]]; then
+  cp "$TMP/imessage-archive/config/env.example" "$INSTALL_DIR/config/env.example"
+fi
+chmod +x "$INSTALL_DIR/client/"*.sh "$INSTALL_DIR/client/"*.py 2>/dev/null || true
+
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  if [[ -f "$INSTALL_DIR/config/env.example" ]]; then
+    cp "$INSTALL_DIR/config/env.example" "$CONFIG_FILE"
+  else
+    touch "$CONFIG_FILE"
+  fi
+fi
+set_kv() {{
+  local k="$1" v="$2"
+  [[ -n "$v" ]] || return 0
+  if grep -q "^${{k}}=" "$CONFIG_FILE" 2>/dev/null; then
+    sed -i.bak "s|^${{k}}=.*|${{k}}=${{v}}|" "$CONFIG_FILE" && rm -f "$CONFIG_FILE.bak"
+  else
+    printf '%s=%s\\n' "$k" "$v" >> "$CONFIG_FILE"
+  fi
+}}
+set_kv SERVER_URL "$SERVER_URL"
+set_kv SEARCH_API "$SEARCH_API"
+set_kv UNRAID_HOST "$UNRAID_HOST"
+set_kv UNRAID_SHARE "${{UNRAID_SHARE:-Misc}}"
+
+ln -sf "$INSTALL_DIR/client/export-and-sync.sh" "$BIN_DIR/imessage-backup"
+ln -sf "$INSTALL_DIR/client/mount-share.sh" "$BIN_DIR/imessage-mount"
+[[ -f "$INSTALL_DIR/client/cli.py" ]] && ln -sf "$INSTALL_DIR/client/cli.py" "$BIN_DIR/imessage-archive"
+
+PLIST="$HOME/Library/LaunchAgents/com.imessage-archive.agent.plist"
+mkdir -p "$(dirname "$PLIST")"
+sed -e "s|HOME|$HOME|g" -e "s|PYTHON|$PYTHON|g" \\
+  "$INSTALL_DIR/client/com.imessage-archive.agent.plist" > "$PLIST"
+launchctl unload "$PLIST" 2>/dev/null || true
+launchctl load "$PLIST"
+launchctl kickstart -k "gui/$(id -u)/com.imessage-archive.agent" 2>/dev/null || true
+launchctl unload "$HOME/Library/LaunchAgents/com.imessage-archive.backup.plist" 2>/dev/null || true
+
+echo ""
+echo "Installed. One remaining Mac step — Full Disk Access:"
+echo "  System Settings → Privacy & Security → Full Disk Access"
+echo "  Enable:  $PYTHON"
+echo "  Enable:  $(command -v imessage-exporter)"
+echo ""
+echo "Then open the dashboard and click Backup now:"
+echo "  $SERVER_URL"
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 2>/dev/null || true
+'''
+    return Response(
+        content=script,
+        media_type="text/x-shellscript",
+        headers={
+            "Content-Disposition": 'inline; filename="install-mac.sh"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 @app.get("/health")
 def health() -> dict[str, Any]:
@@ -202,11 +349,14 @@ def start_index(req: IndexRequest) -> dict[str, Any]:
         return {"status": "already_running", "index": _index_state}
 
     def run() -> None:
-        indexer.index_all()
+        if req.full or not req.ids:
+            indexer.index_all()
+        else:
+            indexer.index_by_ids(req.ids)
 
     threading.Thread(target=run, daemon=True).start()
     archive.invalidate_caches()
-    return {"status": "started", "full": req.full}
+    return {"status": "started", "full": req.full, "id_count": 0 if req.full else len(req.ids)}
 
 
 @app.get("/search")
@@ -300,12 +450,37 @@ def mark_schedule_ran(schedule_id: str = Query(...)) -> dict[str, Any]:
 
 @app.post("/api/clients/{client_id}/backup/trigger")
 def trigger_backup(client_id: str) -> dict[str, Any]:
+    db.get_client(client_id) if hasattr(db, "get_client") else None
+    # list_clients / get by id — check how clients are fetched
+    clients = {c["id"]: c for c in db.list_clients()}
+    if client_id not in clients:
+        raise HTTPException(404, "Client not found")
     db.queue_trigger(client_id)
     return {"ok": True, "queued": True}
 
 
+@app.post("/api/clients/{client_id}/backup/stop")
+def stop_backup(client_id: str) -> dict[str, Any]:
+    """Stop running/queued backups for a Mac: clear queue, mark runs cancelled, signal agent."""
+    clients = {c["id"]: c for c in db.list_clients()}
+    if client_id not in clients:
+        raise HTTPException(404, "Client not found")
+    db.clear_trigger(client_id)
+    cancelled = db.cancel_running_runs(client_id, "Stopped from dashboard")
+    db.request_cancel(client_id)
+    return {"ok": True, "cancelled_runs": cancelled, "cancel_signaled": True}
+
+
+@app.post("/api/clients/backup/cancel-check")
+def cancel_check(client: dict[str, Any] = Depends(client_from_token)) -> dict[str, Any]:
+    """Mac agent polls this during a backup to honor dashboard Stop."""
+    return {"cancel": db.pop_cancel(client["id"])}
+
+
 @app.post("/api/clients/backup/start")
 def backup_start(req: BackupStartRequest, client: dict[str, Any] = Depends(client_from_token)) -> dict[str, Any]:
+    if db.pop_cancel(client["id"]):
+        raise HTTPException(409, "Backup cancelled")
     run_id = db.create_backup_run(client["id"], req.triggered_by, req.schedule_id)
     if req.schedule_id:
         db.mark_schedule_run(req.schedule_id)
@@ -314,5 +489,12 @@ def backup_start(req: BackupStartRequest, client: dict[str, Any] = Depends(clien
 
 @app.post("/api/clients/backup/status")
 def backup_status(req: BackupStatusUpdate, client: dict[str, Any] = Depends(client_from_token)) -> dict[str, Any]:
-    db.update_backup_run(req.run_id, req.status, req.phase, req.message)
-    return {"ok": True}
+    updated = db.update_backup_run(
+        req.run_id,
+        req.status,
+        req.phase,
+        req.message,
+        bytes_done=req.bytes_done,
+        bytes_total=req.bytes_total,
+    )
+    return {"ok": True, "updated": updated}

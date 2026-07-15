@@ -1,0 +1,67 @@
+#!/bin/bash
+# Opens Terminal with the iMessage Archive CLI (status + backup progress).
+set +e
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+RES="$APP_DIR/Resources"
+HOME_DIR="${HOME:-/Users/$(id -un)}"
+INSTALL_DIR="$HOME_DIR/.local/imessage-archive"
+CONFIG_DIR="$HOME_DIR/.config"
+CONFIG_FILE="$CONFIG_DIR/imessage-archive.env"
+LOG_DIR="$HOME_DIR/imessage-export"
+mkdir -p "$LOG_DIR" "$INSTALL_DIR/client" "$CONFIG_DIR" "$HOME_DIR/bin" "$HOME_DIR/mnt"
+
+SERVER_URL="http://192.168.1.200:8095"
+if [[ -f "$RES/server.url" ]]; then
+  SERVER_URL="$(tr -d '[:space:]' < "$RES/server.url")"
+fi
+if [[ "$SERVER_URL" == http://127.0.0.1:* ]] || [[ "$SERVER_URL" == http://localhost:* ]]; then
+  SERVER_URL="http://192.168.1.200:8095"
+fi
+HOST="$(echo "$SERVER_URL" | sed -E 's#https?://([^/:]+).*#\1#')"
+
+# Sync bundled client
+if command -v rsync >/dev/null 2>&1; then
+  rsync -a --delete "$RES/client/" "$INSTALL_DIR/client/"
+else
+  cp -R "$RES/client/"* "$INSTALL_DIR/client/"
+fi
+cp "$RES/terminal-start.sh" "$INSTALL_DIR/client/terminal-start.sh" 2>/dev/null
+chmod +x "$INSTALL_DIR/client/"*.sh "$INSTALL_DIR/client/"*.py 2>/dev/null
+
+# Config
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  cat > "$CONFIG_FILE" <<EOF
+SERVER_URL=$SERVER_URL
+SEARCH_API=$SERVER_URL
+UNRAID_HOST=$HOST
+UNRAID_SHARE=Misc
+MOUNT_POINT=\$HOME/mnt/unraid-imessage
+LOCAL_EXPORT=\$HOME/imessage-export
+COPY_METHOD=full
+IMMICH_URL=http://$HOST:8090
+IMMICH_ALBUM=iMessage
+EOF
+else
+  grep -q '^SERVER_URL=' "$CONFIG_FILE" && sed -i '' "s|^SERVER_URL=.*|SERVER_URL=$SERVER_URL|" "$CONFIG_FILE" || echo "SERVER_URL=$SERVER_URL" >> "$CONFIG_FILE"
+  grep -q '^SEARCH_API=' "$CONFIG_FILE" && sed -i '' "s|^SEARCH_API=.*|SEARCH_API=$SERVER_URL|" "$CONFIG_FILE" || echo "SEARCH_API=$SERVER_URL" >> "$CONFIG_FILE"
+fi
+
+# PATH wrapper
+cat > "$HOME_DIR/bin/imessage-archive" <<'EOF'
+#!/bin/bash
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/bin:/usr/bin:/bin"
+exec "$(command -v python3)" "$HOME/.local/imessage-archive/client/cli.py" "$@"
+EOF
+chmod +x "$HOME_DIR/bin/imessage-archive"
+ln -sf "$INSTALL_DIR/client/export-and-sync.sh" "$HOME_DIR/bin/imessage-backup"
+
+# Clear quarantine on this app copy
+xattr -dr com.apple.quarantine "$(dirname "$APP_DIR")" 2>/dev/null
+
+START="$INSTALL_DIR/client/terminal-start.sh"
+export SERVER_URL
+# Open Terminal running the start script (avoids AppleScript quoting hell)
+/usr/bin/osascript -e "tell application \"Terminal\" to activate" \
+  -e "tell application \"Terminal\" to do script \"export SERVER_URL='$SERVER_URL'; export PATH=\\\"/opt/homebrew/bin:/usr/local/bin:\$HOME/bin:/usr/bin:/bin\\\"; bash '$START'\""

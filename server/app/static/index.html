@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>iMessage Archive</title>
-  <link rel="stylesheet" href="/static/styles.css?v=6" />
+  <link rel="stylesheet" href="/static/styles.css?v=10" />
 </head>
 <body>
   <div class="app">
@@ -29,6 +29,25 @@
         <div class="cards" id="stat-cards"></div>
         <h2>Mac Clients</h2>
         <div id="clients-list" class="clients-list"></div>
+        <div class="setup-panel" id="mac-setup-panel">
+          <div class="setup-panel-head">
+            <div>
+              <strong>Add a Mac</strong>
+              <p class="muted setup-blurb">On the Mac, open <strong>Terminal</strong> and run the install command (pulls the agent from this server). Grant Full Disk Access once. Then start, watch progress, and stop backups from this dashboard.</p>
+            </div>
+            <button type="button" class="btn small" id="btn-copy-install">Copy install command</button>
+          </div>
+          <pre id="mac-install-cmd" class="setup-prompt" tabindex="0"></pre>
+          <p class="muted setup-blurb" style="margin-top:.65rem">Full Disk Access needed for: <code>/usr/bin/python3</code> and <code>imessage-exporter</code>. The installer opens Settings.</p>
+          <details class="setup-advanced">
+            <summary>Advanced</summary>
+            <div class="setup-advanced-body">
+              <a class="btn small secondary" id="btn-download-mac" href="/download/mac-client.zip">Download legacy Mac .app</a>
+              <button type="button" id="btn-copy-mac-setup" class="btn small secondary">Copy Cursor agent prompt</button>
+              <pre id="mac-setup-prompt" class="setup-prompt" tabindex="0"></pre>
+            </div>
+          </details>
+        </div>
         <h2>Recent Backups</h2>
         <div id="runs-list" class="runs-list"></div>
       </section>
@@ -67,7 +86,7 @@
           <h1>Backup Schedules</h1>
           <button id="btn-new-schedule" class="btn">+ New schedule</button>
         </header>
-        <p class="muted">Mac agents poll the server every 60s and run backups when a schedule is due.</p>
+        <p class="muted">Mac agents poll every 60s. Schedule times are <strong>America/Los_Angeles</strong> (server local). If the Mac was asleep at the exact minute, the next heartbeat that day still catches up once.</p>
         <div id="schedules-list"></div>
         <div id="schedule-editor" class="schedule-editor hidden"></div>
       </section>
@@ -81,6 +100,6 @@
     <div id="lightbox-caption" class="lightbox-caption"></div>
   </div>
 
-  <script src="/static/app.js?v=9"></script>
+  <script src="/static/app.js?v=13"></script>
 </body>
 </html>

@@ -45,6 +45,83 @@ nav { display: flex; flex-direction: column; gap: .35rem; }
 .clients-list, .runs-list { display: flex; flex-direction: column; gap: .6rem; }
 .client-card, .run-row { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; }
 .client-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.progress-block { margin-top: .75rem; }
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: .75rem;
+  font-size: .85rem;
+  margin-bottom: .35rem;
+}
+.progress-track {
+  height: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent2), var(--accent));
+  transition: width .35s ease;
+}
+.progress-track.indeterminate .progress-fill {
+  width: 35%;
+  animation: progress-slide 1.2s ease-in-out infinite;
+}
+@keyframes progress-slide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+.progress-label {
+  margin-top: .35rem;
+  font-size: .8rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+.setup-panel {
+  margin-top: .75rem;
+  background: var(--panel);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+.setup-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: .75rem;
+}
+.setup-blurb { margin: .35rem 0 0; font-size: .85rem; line-height: 1.45; max-width: 52rem; }
+a.btn { display: inline-block; text-decoration: none; line-height: normal; }
+.setup-advanced { margin-top: .85rem; }
+.setup-advanced summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: .85rem;
+  user-select: none;
+}
+.setup-advanced-body { margin-top: .65rem; }
+.setup-advanced-body .btn { margin-bottom: .5rem; }
+.setup-prompt {
+  margin: 0;
+  padding: .85rem 1rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: .78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 18rem;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+#btn-copy-mac-setup.copied { background: var(--success); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: .4rem; }
 .status-dot.online { background: var(--success); }
 .status-dot.offline { background: var(--muted); }

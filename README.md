@@ -44,13 +44,19 @@ Open **http://192.168.1.200:8095**
 
 ### Mac client
 
+**Easiest:** open the dashboard → **Download Mac App**, unzip, open `iMessage Archive.app`.
+
+Or install from the Mac Terminal:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/CorbinRandall/imessage-archive/main/scripts/install-client.sh | bash
 ```
 
-1. Grant **Full Disk Access** to Terminal (System Settings → Privacy & Security)
+1. Grant **Full Disk Access** (app button, or System Settings → Privacy & Security)
 2. Your Mac appears on the dashboard within ~60 seconds
 3. Go to **Schedules** tab → pick weekdays + time → Save
+
+Direct download: `http://<your-server>:8095/download/mac-client.zip`
 
 ## Using the GUI
 
