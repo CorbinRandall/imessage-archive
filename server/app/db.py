@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS backup_runs (
     status TEXT NOT NULL,
     phase TEXT,
     message TEXT,
+    bytes_done INTEGER,
+    bytes_total INTEGER,
     started_at REAL NOT NULL,
     finished_at REAL,
     triggered_by TEXT NOT NULL DEFAULT 'schedule'
@@ -103,6 +105,10 @@ def _migrate_legacy_schedule(conn: sqlite3.Connection) -> None:
     run_cols = {row[1] for row in conn.execute("PRAGMA table_info(backup_runs)")}
     if run_cols and "schedule_id" not in run_cols:
         conn.execute("ALTER TABLE backup_runs ADD COLUMN schedule_id TEXT")
+    if run_cols and "bytes_done" not in run_cols:
+        conn.execute("ALTER TABLE backup_runs ADD COLUMN bytes_done INTEGER")
+    if run_cols and "bytes_total" not in run_cols:
+        conn.execute("ALTER TABLE backup_runs ADD COLUMN bytes_total INTEGER")
 
 
 @contextmanager
@@ -348,7 +354,14 @@ def create_backup_run(client_id: str, triggered_by: str, schedule_id: str | None
     return run_id
 
 
-def update_backup_run(run_id: str, status: str | None = None, phase: str | None = None, message: str | None = None) -> bool:
+def update_backup_run(
+    run_id: str,
+    status: str | None = None,
+    phase: str | None = None,
+    message: str | None = None,
+    bytes_done: int | None = None,
+    bytes_total: int | None = None,
+) -> bool:
     """Update a run. Returns False if ignored (finished/cancelled runs are immutable)."""
     with connect() as conn:
         row = conn.execute(
@@ -367,6 +380,10 @@ def update_backup_run(run_id: str, status: str | None = None, phase: str | None 
             fields.append("phase = ?"); values.append(phase)
         if message is not None:
             fields.append("message = ?"); values.append(message)
+        if bytes_done is not None:
+            fields.append("bytes_done = ?"); values.append(int(bytes_done))
+        if bytes_total is not None:
+            fields.append("bytes_total = ?"); values.append(int(bytes_total))
         if status in ("success", "error"):
             fields.append("finished_at = ?"); values.append(time.time())
         if not fields:

@@ -45,6 +45,34 @@ nav { display: flex; flex-direction: column; gap: .35rem; }
 .clients-list, .runs-list { display: flex; flex-direction: column; gap: .6rem; }
 .client-card, .run-row { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; }
 .client-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.progress-block { margin-top: .75rem; }
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: .75rem;
+  font-size: .85rem;
+  margin-bottom: .35rem;
+}
+.progress-track {
+  height: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent2), var(--accent));
+  transition: width .35s ease;
+}
+.progress-label {
+  margin-top: .35rem;
+  font-size: .8rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.btn:disabled { opacity: .55; cursor: not-allowed; }
 .setup-panel {
   margin-top: .75rem;
   background: var(--panel);

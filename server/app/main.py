@@ -86,6 +86,8 @@ class BackupStatusUpdate(BaseModel):
     status: str | None = None
     phase: str | None = None
     message: str | None = None
+    bytes_done: int | None = None
+    bytes_total: int | None = None
 
 
 class BackupStartRequest(BaseModel):
@@ -105,24 +107,80 @@ def home() -> FileResponse:
     return FileResponse(static_dir / "index.html")
 
 
-@app.get("/download/mac-client.zip")
-def download_mac_client(request: Request) -> Response:
-    """One-stop Mac app: status UI + permissions + background agent, SERVER_URL baked in."""
-    # Prefer the Host the browser used (LAN / Tailscale). Avoid baking loopback.
+def _request_server_url(request: Request) -> str:
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
     scheme = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
     if host and not host.startswith("127.0.0.1") and not host.startswith("localhost"):
-        server_url = f"{scheme}://{host}".rstrip("/")
-    else:
-        server_url = str(request.base_url).rstrip("/")
-        if "127.0.0.1" in server_url or "localhost" in server_url:
-            server_url = "http://192.168.1.200:8095"
+        return f"{scheme}://{host}".rstrip("/")
+    server_url = str(request.base_url).rstrip("/")
+    if "127.0.0.1" in server_url or "localhost" in server_url:
+        return "http://192.168.1.200:8095"
+    return server_url
+
+
+@app.get("/download/mac-client.zip")
+def download_mac_client(request: Request) -> Response:
+    """Legacy Mac .app zip (advanced). Prefer /download/install-mac.sh."""
+    server_url = _request_server_url(request)
     payload = build_mac_client_zip(server_url)
     return Response(
         content=payload,
         media_type="application/zip",
         headers={
             "Content-Disposition": 'attachment; filename="iMessage-Archive-Mac.zip"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.get("/download/install-mac.sh")
+def download_install_mac(request: Request) -> Response:
+    """One-liner installer for a Mac: curl this | bash."""
+    server_url = _request_server_url(request)
+    host = getattr(request.url, "hostname", None) or "192.168.1.200"
+    script = f'''#!/usr/bin/env bash
+set -euo pipefail
+# iMessage Archive — Mac installer (served by {server_url})
+export SERVER_URL="{server_url}"
+export SEARCH_API="{server_url}"
+export UNRAID_HOST="{host}"
+export REPO_URL="${{REPO_URL:-https://github.com/CorbinRandall/imessage-archive.git}}"
+export BRANCH="${{BRANCH:-feat/stop-progress-incremental}}"
+echo "==> Installing iMessage Archive client for $SERVER_URL"
+curl -fsSL "https://raw.githubusercontent.com/CorbinRandall/imessage-archive/$BRANCH/scripts/install-client.sh" | bash
+CFG="$HOME/.config/imessage-archive.env"
+mkdir -p "$(dirname "$CFG")"
+touch "$CFG"
+set_kv() {{
+  local k="$1" v="$2"
+  if grep -q "^${{k}}=" "$CFG" 2>/dev/null; then
+    sed -i.bak "s|^${{k}}=.*|${{k}}=${{v}}|" "$CFG" && rm -f "$CFG.bak"
+  else
+    printf '%s=%s\\n' "$k" "$v" >> "$CFG"
+  fi
+}}
+set_kv SERVER_URL "$SERVER_URL"
+set_kv SEARCH_API "$SEARCH_API"
+set_kv UNRAID_HOST "$UNRAID_HOST"
+set_kv UNRAID_SHARE "${{UNRAID_SHARE:-Misc}}"
+PLIST="$HOME/Library/LaunchAgents/com.imessage-archive.agent.plist"
+if [[ -f "$PLIST" ]]; then
+  launchctl unload "$PLIST" 2>/dev/null || true
+  launchctl load "$PLIST" 2>/dev/null || true
+  launchctl kickstart -k "gui/$(id -u)/com.imessage-archive.agent" 2>/dev/null || true
+fi
+echo ""
+echo "Next: grant Full Disk Access (System Settings → Privacy & Security):"
+echo "  • /usr/bin/python3"
+echo "  • imessage-exporter (Homebrew)"
+echo "Then open the dashboard and click Backup now: $SERVER_URL"
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 2>/dev/null || true
+'''
+    return Response(
+        content=script,
+        media_type="text/x-shellscript",
+        headers={
+            "Content-Disposition": 'inline; filename="install-mac.sh"',
             "Cache-Control": "no-store",
         },
     )
@@ -366,5 +424,12 @@ def backup_start(req: BackupStartRequest, client: dict[str, Any] = Depends(clien
 
 @app.post("/api/clients/backup/status")
 def backup_status(req: BackupStatusUpdate, client: dict[str, Any] = Depends(client_from_token)) -> dict[str, Any]:
-    updated = db.update_backup_run(req.run_id, req.status, req.phase, req.message)
+    updated = db.update_backup_run(
+        req.run_id,
+        req.status,
+        req.phase,
+        req.message,
+        bytes_done=req.bytes_done,
+        bytes_total=req.bytes_total,
+    )
     return {"ok": True, "updated": updated}

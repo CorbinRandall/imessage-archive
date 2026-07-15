@@ -29,13 +29,67 @@ FORCE_FULL="${FORCE_FULL:-0}"
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 
+# Running totals for dashboard progress (bytes).
+BYTES_DONE=0
+BYTES_TOTAL=0
+
+path_bytes() {
+  local p="$1"
+  if [[ -f "$p" ]]; then
+    stat -f%z "$p" 2>/dev/null || stat -c%s "$p" 2>/dev/null || echo 0
+  elif [[ -d "$p" ]]; then
+    du -sk "$p" 2>/dev/null | awk '{print $1 * 1024}' || echo 0
+  else
+    echo 0
+  fi
+}
+
+estimate_backup_total() {
+  local att db html extra
+  att="$(path_bytes "$HOME/Library/Messages/Attachments")"
+  db="$(path_bytes "$HOME/Library/Messages/chat.db")"
+  html="$(path_bytes "$LOCAL_EXPORT/html")"
+  # HTML re-export roughly tracks attachment volume on full runs; keep a floor so bar moves.
+  if [[ "${FORCE_FULL:-0}" == "1" ]] || [[ ! -f "$CHECKPOINT_FILE" ]]; then
+    extra=$(( att / 5 ))
+  elif [[ "$html" -gt 0 ]]; then
+    extra="$html"
+  else
+    extra=$(( att / 20 ))
+  fi
+  echo $(( att + db + extra ))
+}
+
+emit_progress() {
+  local done="$1" total="$2" phase="$3"
+  shift 3
+  local msg="${*:-}"
+  BYTES_DONE="$done"
+  BYTES_TOTAL="$total"
+  printf 'PROGRESS bytes_done=%s bytes_total=%s phase=%s %s\n' "$done" "$total" "$phase" "$msg"
+  report "running" "$phase" "$msg" "$done" "$total"
+}
+
 report() {
   [[ -n "${BACKUP_RUN_ID:-}" && -n "${CLIENT_TOKEN:-}" ]] || return 0
   local status="${1:-}" phase="${2:-}" message="${3:-}"
+  local bytes_done="${4:-}" bytes_total="${5:-}"
+  local payload
+  payload="$(python3 - "$status" "$phase" "$message" "$BACKUP_RUN_ID" "${bytes_done:-}" "${bytes_total:-}" <<'PY'
+import json, sys
+status, phase, message, run_id, done, total = sys.argv[1:7]
+body = {"run_id": run_id, "status": status, "phase": phase, "message": message}
+if done != "":
+    body["bytes_done"] = int(done)
+if total != "":
+    body["bytes_total"] = int(total)
+print(json.dumps(body))
+PY
+)"
   curl -fsS -X POST "$SERVER_URL/api/clients/backup/status" \
     -H "Authorization: Bearer $CLIENT_TOKEN" \
     -H 'Content-Type: application/json' \
-    -d "{\"run_id\":\"$BACKUP_RUN_ID\",\"status\":\"$status\",\"phase\":\"$phase\",\"message\":\"$message\"}" \
+    -d "$payload" \
     >/dev/null 2>&1 || true
 }
 
@@ -113,6 +167,7 @@ export_messages() {
   fi
 
   report "running" "export" "Exporting messages ($mode)"
+  emit_progress "$BYTES_DONE" "$BYTES_TOTAL" "export" "Exporting messages ($mode)"
   osascript -e 'quit app "Messages"' 2>/dev/null || true
   sleep 2
 
@@ -139,6 +194,8 @@ export_messages() {
     rm -rf "$staging"
   fi
 
+  # HTML export finished — ~15% of estimated total before attachment copy.
+  emit_progress "$(( BYTES_TOTAL * 15 / 100 ))" "$BYTES_TOTAL" "export" "Copying chat.db + Attachments"
   report "running" "export" "Copying chat.db + Attachments"
   log "Copying raw database and attachments..."
   cp "$HOME/Library/Messages/chat.db" "$LOCAL_EXPORT/raw/"
@@ -148,6 +205,7 @@ export_messages() {
   else
     rsync -a --partial --progress "$HOME/Library/Messages/Attachments/" "$LOCAL_EXPORT/raw/Attachments/"
   fi
+  emit_progress "$(( BYTES_TOTAL * 55 / 100 ))" "$BYTES_TOTAL" "export" "Attachments copied"
 
   report "running" "export" "Exporting contacts"
   log "Exporting contacts..."
@@ -204,6 +262,7 @@ upload_to_immich() {
     log "IMMICH_API_KEY not set — skipping Immich upload (will sync attachments locally)"
     return 0
   fi
+  emit_progress "$(( BYTES_TOTAL * 55 / 100 ))" "$BYTES_TOTAL" "immich" "Uploading media to Immich"
   report "running" "immich" "Uploading media to Immich"
   log "Uploading photos/videos to Immich album '${IMMICH_ALBUM:-iMessage}'..."
   python3 "$SCRIPT_DIR/upload-to-immich.py" \
@@ -213,7 +272,11 @@ upload_to_immich() {
     --immich-url "${IMMICH_URL:-http://192.168.1.200:8090}" \
     --api-key "$IMMICH_API_KEY" \
     --album "${IMMICH_ALBUM:-iMessage}" \
-    --map-file "$LOCAL_EXPORT/immich-map.json" 2>&1 | tee -a "$LOCAL_EXPORT/logs/immich-upload.log"
+    --map-file "$LOCAL_EXPORT/immich-map.json" \
+    --bytes-total "$BYTES_TOTAL" \
+    --bytes-base "$(( BYTES_TOTAL * 55 / 100 ))" \
+    --bytes-span "$(( BYTES_TOTAL * 30 / 100 ))" 2>&1 | tee -a "$LOCAL_EXPORT/logs/immich-upload.log"
+  emit_progress "$(( BYTES_TOTAL * 85 / 100 ))" "$BYTES_TOTAL" "immich" "Immich upload done"
 }
 
 rsync_retry() {
@@ -234,6 +297,11 @@ rsync_retry() {
 }
 
 sync_to_server() {
+  local sync_start=$(( BYTES_TOTAL * 85 / 100 ))
+  if [[ "${BYTES_DONE:-0}" -gt "$sync_start" ]]; then
+    sync_start="$BYTES_DONE"
+  fi
+  emit_progress "$sync_start" "$BYTES_TOTAL" "sync" "Syncing to server"
   report "running" "sync" "Syncing to server"
   log "Syncing to server..."
   report "running" "sync" "Uploading messages.jsonl"
@@ -255,6 +323,7 @@ sync_to_server() {
   else
     log "Immich enabled — skipping bulk attachment rsync (media lives in Immich)"
   fi
+  emit_progress "$(( BYTES_TOTAL * 95 / 100 ))" "$BYTES_TOTAL" "sync" "Server sync done"
 }
 
 trigger_reindex() {
@@ -293,6 +362,14 @@ main() {
   mkdir -p "$LOCAL_EXPORT"
   ensure_mount
   check_full_disk_access
+  BYTES_TOTAL="$(estimate_backup_total)"
+  BYTES_DONE=0
+  # Floor so UI never shows 0 total when Messages data exists.
+  if [[ "${BYTES_TOTAL:-0}" -lt 1 ]]; then
+    BYTES_TOTAL=1
+  fi
+  emit_progress 0 "$BYTES_TOTAL" "sizing" "Estimating backup size"
+  log "Estimated backup size: $BYTES_TOTAL bytes"
   export_messages
   upload_to_immich
   sync_to_server
@@ -300,7 +377,8 @@ main() {
   if [[ "${EXPORT_MAX_ROWID:-0}" -gt 0 ]]; then
     write_checkpoint "$EXPORT_MAX_ROWID"
   fi
-  report "success" "done" "Backup complete"
+  emit_progress "$BYTES_TOTAL" "$BYTES_TOTAL" "done" "Backup complete"
+  report "success" "done" "Backup complete" "$BYTES_TOTAL" "$BYTES_TOTAL"
   log "Done. View at $SERVER_URL"
 }
 

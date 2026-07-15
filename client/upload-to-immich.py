@@ -155,6 +155,9 @@ def main() -> int:
     parser.add_argument("--api-key", required=True)
     parser.add_argument("--album", default="iMessage")
     parser.add_argument("--map-file", default="", help="Optional sidecar JSON map attachment_id->asset_id")
+    parser.add_argument("--bytes-total", type=int, default=0, help="Overall backup bytes estimate for PROGRESS lines")
+    parser.add_argument("--bytes-base", type=int, default=0, help="Bytes already accounted before Immich phase")
+    parser.add_argument("--bytes-span", type=int, default=0, help="Byte span allocated to Immich phase")
     args = parser.parse_args()
 
     base = args.immich_url.rstrip("/") + "/api"
@@ -250,6 +253,12 @@ def main() -> int:
         filled = int(round(width * pct / 100.0))
         bar = "[" + "#" * filled + "-" * (width - filled) + f"] {pct:5.1f}%"
         line = f"Immich {bar}  {i}/{total}  {label[:40]}"
+        if args.bytes_total > 0 and args.bytes_span > 0:
+            done = args.bytes_base + int(args.bytes_span * (pct / 100.0))
+            print(
+                f"PROGRESS bytes_done={done} bytes_total={args.bytes_total} phase=immich {line}",
+                flush=True,
+            )
         if sys.stdout.isatty():
             print(f"\r{line:<90}", end="", flush=True)
         elif i == total or i % 10 == 0 or i == 1:

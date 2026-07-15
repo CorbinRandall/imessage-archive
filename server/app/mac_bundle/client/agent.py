@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -20,6 +21,17 @@ INSTALL_DIR = Path.home() / ".local/imessage-archive"
 POLL_SECONDS = int(os.environ.get("AGENT_POLL_SECONDS", "60"))
 CANCEL_POLL_SECONDS = float(os.environ.get("AGENT_CANCEL_POLL_SECONDS", "2"))
 PROGRESS_TAIL = 240
+PROGRESS_REPORT_MIN_SECONDS = float(os.environ.get("AGENT_PROGRESS_REPORT_SECONDS", "1.5"))
+
+# PROGRESS bytes_done=123 bytes_total=456 phase=sync Copying…
+PROGRESS_LINE_RE = re.compile(
+    r"^PROGRESS\s+bytes_done=(?P<done>\d+)\s+bytes_total=(?P<total>\d+)"
+    r"(?:\s+phase=(?P<phase>\S+))?(?:\s+(?P<msg>.*))?$"
+)
+# rsync --info=progress2: "  1,234,567  45%  12.34MB/s    0:01:23"
+RSYNC_PROGRESS_RE = re.compile(r"^\s*([\d,]+)\s+(\d+)%")
+# Immich [####]  45.0%  12/100  …
+IMMICH_PROGRESS_RE = re.compile(r"Immich\s+\[.*?\]\s+(\d+(?:\.\d+)?)%\s+(\d+)/(\d+)")
 
 
 def load_config() -> dict[str, str]:
@@ -84,12 +96,19 @@ def report_status(
     status: str | None = None,
     phase: str | None = None,
     message: str | None = None,
+    bytes_done: int | None = None,
+    bytes_total: int | None = None,
 ) -> None:
+    body: dict = {"run_id": run_id, "status": status, "phase": phase, "message": message}
+    if bytes_done is not None:
+        body["bytes_done"] = int(bytes_done)
+    if bytes_total is not None:
+        body["bytes_total"] = int(bytes_total)
     api_request(
         f"{server}/api/clients/backup/status",
         method="POST",
         token=token,
-        body={"run_id": run_id, "status": status, "phase": phase, "message": message},
+        body=body,
     )
 
 
@@ -121,6 +140,44 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
         except ProcessLookupError:
             pass
         proc.wait(timeout=5)
+
+
+def parse_progress_line(
+    line: str,
+    *,
+    bytes_done: int | None,
+    bytes_total: int | None,
+    phase: str | None,
+) -> tuple[int | None, int | None, str | None, str]:
+    """Extract bytes/phase from a backup log line. Returns (done, total, phase, message)."""
+    msg = line.strip()
+    m = PROGRESS_LINE_RE.match(msg)
+    if m:
+        return (
+            int(m.group("done")),
+            int(m.group("total")),
+            m.group("phase") or phase,
+            (m.group("msg") or "").strip() or msg,
+        )
+
+    m = IMMICH_PROGRESS_RE.search(msg)
+    if m and bytes_total:
+        pct = float(m.group(1))
+        # Map Immich % onto remaining mid-bucket if we already have a total.
+        return int(bytes_total * (pct / 100.0)), bytes_total, phase or "immich", msg
+
+    m = RSYNC_PROGRESS_RE.match(msg)
+    if m:
+        transferred = int(m.group(1).replace(",", ""))
+        pct = int(m.group(2))
+        if bytes_total and pct > 0:
+            # Prefer percent of known total when available.
+            return int(bytes_total * (pct / 100.0)), bytes_total, phase or "sync", msg
+        if bytes_total:
+            return min(transferred, bytes_total), bytes_total, phase or "sync", msg
+        return transferred, bytes_total, phase or "sync", msg
+
+    return bytes_done, bytes_total, phase, msg
 
 
 def run_backup(server: str, token: str, triggered_by: str, schedule_id: str | None = None) -> None:
@@ -159,11 +216,36 @@ def run_backup(server: str, token: str, triggered_by: str, schedule_id: str | No
     log_path = Path.home() / "imessage-export" / "logs" / f"agent-{run_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     last_progress = ""
+    bytes_done: int | None = None
+    bytes_total: int | None = None
+    phase = "export"
     stop = threading.Event()
     cancelled = threading.Event()
+    last_report_at = 0.0
+    lock = threading.Lock()
+
+    def maybe_report(force: bool = False) -> None:
+        nonlocal last_report_at
+        now = time.time()
+        if not force and (now - last_report_at) < PROGRESS_REPORT_MIN_SECONDS:
+            return
+        last_report_at = now
+        try:
+            report_status(
+                server,
+                token,
+                run_id,
+                status="running",
+                phase=phase,
+                message=last_progress,
+                bytes_done=bytes_done,
+                bytes_total=bytes_total,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def forward_progress(pipe, log_fh) -> None:
-        nonlocal last_progress
+        nonlocal last_progress, bytes_done, bytes_total, phase
         for raw in iter(pipe.readline, ""):
             if not raw:
                 break
@@ -172,19 +254,15 @@ def run_backup(server: str, token: str, triggered_by: str, schedule_id: str | No
             sys.stdout.write(raw)
             sys.stdout.flush()
             line = raw.strip()
-            if line:
-                last_progress = line[-PROGRESS_TAIL:]
-                try:
-                    report_status(
-                        server,
-                        token,
-                        run_id,
-                        status="running",
-                        phase="progress",
-                        message=last_progress,
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
+            if not line:
+                continue
+            with lock:
+                bd, bt, ph, msg = parse_progress_line(
+                    line, bytes_done=bytes_done, bytes_total=bytes_total, phase=phase
+                )
+                bytes_done, bytes_total, phase = bd, bt, ph or phase
+                last_progress = msg[-PROGRESS_TAIL:]
+                maybe_report()
 
     def cancel_watch(proc: subprocess.Popen) -> None:
         while not stop.wait(CANCEL_POLL_SECONDS):
@@ -224,12 +302,23 @@ def run_backup(server: str, token: str, triggered_by: str, schedule_id: str | No
                 status="error",
                 phase="cancelled",
                 message=last_progress or "Stopped from dashboard",
+                bytes_done=bytes_done,
+                bytes_total=bytes_total,
             )
             print("Backup cancelled")
             return
 
         if code == 0:
-            report_status(server, token, run_id, status="success", phase="done", message="Backup completed")
+            report_status(
+                server,
+                token,
+                run_id,
+                status="success",
+                phase="done",
+                message="Backup completed",
+                bytes_done=bytes_total if bytes_total else bytes_done,
+                bytes_total=bytes_total,
+            )
             print("Backup completed successfully")
             return
 
@@ -237,7 +326,16 @@ def run_backup(server: str, token: str, triggered_by: str, schedule_id: str | No
             f"export-and-sync.sh exited with code {code} "
             "(check Full Disk Access for /usr/bin/python3)"
         )
-        report_status(server, token, run_id, status="error", phase="failed", message=msg[-2000:])
+        report_status(
+            server,
+            token,
+            run_id,
+            status="error",
+            phase="failed",
+            message=msg[-2000:],
+            bytes_done=bytes_done,
+            bytes_total=bytes_total,
+        )
         print(f"Backup failed: {msg}", file=sys.stderr)
     except Exception as exc:  # noqa: BLE001
         report_status(server, token, run_id, status="error", message=str(exc))

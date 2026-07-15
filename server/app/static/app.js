@@ -102,59 +102,56 @@ $$('.nav').forEach(btn => btn.onclick = () => {
   if (btn.dataset.view === 'dashboard') loadDashboard();
 });
 
+function fmtBytes(n) {
+  if (n == null || Number.isNaN(Number(n))) return '';
+  const v = Number(n);
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let x = Math.max(0, v);
+  let i = 0;
+  while (x >= 1024 && i < units.length - 1) { x /= 1024; i += 1; }
+  const digits = i === 0 ? 0 : (x >= 10 ? 0 : 1);
+  return `${x.toFixed(digits)} ${units[i]}`;
+}
+
+function progressPct(done, total) {
+  if (!total || total <= 0) return null;
+  return Math.max(0, Math.min(100, Math.round((Number(done || 0) / Number(total)) * 100)));
+}
+
+function progressBarHtml(done, total, label = '') {
+  const pct = progressPct(done, total);
+  if (pct == null) return label ? `<div class="muted" style="margin-top:.35rem">${esc(label)}</div>` : '';
+  const doneLabel = fmtBytes(done);
+  const totalLabel = fmtBytes(total);
+  return `
+    <div class="progress-block">
+      <div class="progress-meta">
+        <span>${doneLabel} / ${totalLabel}</span>
+        <strong>${pct}%</strong>
+      </div>
+      <div class="progress-track" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}">
+        <div class="progress-fill" style="width:${pct}%"></div>
+      </div>
+      ${label ? `<div class="muted progress-label">${esc(label)}</div>` : ''}
+    </div>`;
+}
+
+function activeRunForClient(clientId, runs) {
+  return (runs || []).find(r => r.client_id === clientId && r.status === 'running') || null;
+}
+
 // ===== Dashboard =====
-function buildMacSetupPrompt() {
+function buildMacInstallCmd() {
   const serverUrl = window.location.origin.replace(/\/$/, '');
-  let host = window.location.hostname || '192.168.1.200';
-  try { host = new URL(serverUrl).hostname; } catch (_) { /* keep fallback */ }
-  return `Set up THIS Mac as an iMessage Archive backup client for ${serverUrl}.
-
-Goal: install the Mac client so this computer registers automatically and appears under "Mac Clients" on the dashboard at ${serverUrl}. Prefer the one-stop Mac app when possible:
-
-  open ${serverUrl}/download/mac-client.zip
-  # Unzip → open "iMessage Archive.app" → Grant Permissions → wait until Connected
-
-Or do a manual/scripted install on THIS Mac (local shell). Do NOT SSH into Unraid and do NOT redeploy or restart the Docker stack.
-
-Manual steps (if not using the .app):
-1. Ensure Homebrew is installed (\`brew --version\`). If missing, install it from https://brew.sh.
-2. Run the official client installer:
-   curl -fsSL https://raw.githubusercontent.com/CorbinRandall/imessage-archive/main/scripts/install-client.sh | bash
-3. Edit ~/.config/imessage-archive.env (created by the installer) so these values are set:
-   SERVER_URL=${serverUrl}
-   SEARCH_API=${serverUrl}
-   UNRAID_HOST=${host}
-   UNRAID_SHARE=Misc
-   MOUNT_POINT=$HOME/mnt/unraid-imessage
-   LOCAL_EXPORT=$HOME/imessage-export
-   COPY_METHOD=full
-   Optional: CLIENT_NAME=<friendly display name for this Mac>
-   Optional Immich media upload: IMMICH_URL=http://${host}:8090 and IMMICH_API_KEY=<key from Immich>
-   Optional SMB auth if guest mount fails: SMB_USER / SMB_PASS
-4. Confirm the launchd agent is loaded:
-   launchctl list | grep imessage-archive
-   If missing: launchctl load ~/Library/LaunchAgents/com.imessage-archive.agent.plist
-5. Force a registration/heartbeat so this Mac shows up on the dashboard immediately:
-   python3 ~/.local/imessage-archive/client/agent.py --once
-   Then verify: curl -fsS ${serverUrl}/api/clients | python3 -m json.tool
-   This Mac's hostname (or CLIENT_NAME) must appear in clients[].
-6. Full Disk Access is required for backups (you cannot grant this programmatically). Tell the user to open System Settings → Privacy & Security → Full Disk Access and enable:
-   • /usr/bin/python3  (background agent)
-   • /opt/homebrew/bin/imessage-exporter  (or /usr/local/bin/imessage-exporter on Intel Macs)
-   • Terminal and/or Cursor if they will run manual backups
-7. After FDA is granted, optionally run \`imessage-backup\`, or have the user click "Backup now" for this Mac on the dashboard. Then open Schedules on ${serverUrl} and set weekdays/time if desired.
-
-Success criteria: this Mac appears under Mac Clients on ${serverUrl} (green/online within ~2 minutes of heartbeats). Report config path, agent status, and registration result.`;
+  return `curl -fsSL ${serverUrl}/download/install-mac.sh | bash`;
 }
 
-function refreshMacSetupPrompt() {
-  const el = $('#mac-setup-prompt');
-  if (el) el.textContent = buildMacSetupPrompt();
+function refreshMacInstallCmd() {
+  const el = $('#mac-install-cmd');
+  if (el) el.textContent = buildMacInstallCmd();
 }
 
-async function copyMacSetupPrompt() {
-  const text = buildMacSetupPrompt();
-  const btn = $('#btn-copy-mac-setup');
+async function copyText(text, btn) {
   try {
     await navigator.clipboard.writeText(text);
   } catch (_) {
@@ -176,7 +173,35 @@ async function copyMacSetupPrompt() {
   }
 }
 
+function buildMacSetupPrompt() {
+  const serverUrl = window.location.origin.replace(/\/$/, '');
+  let host = window.location.hostname || '192.168.1.200';
+  try { host = new URL(serverUrl).hostname; } catch (_) { /* keep fallback */ }
+  return `Set up THIS Mac as an iMessage Archive backup client for ${serverUrl}.
+
+Run ONLY on the Mac (local Terminal). Do NOT SSH into Unraid or paste this into Cursor on Linux.
+
+1. Install/update the headless agent:
+   curl -fsSL ${serverUrl}/download/install-mac.sh | bash
+2. Grant Full Disk Access (System Settings → Privacy & Security):
+   • /usr/bin/python3
+   • Homebrew imessage-exporter
+3. Confirm the Mac appears under Mac Clients at ${serverUrl}, then click Backup now.
+
+Config lives in ~/.config/imessage-archive.env (SERVER_URL=${serverUrl}, UNRAID_HOST=${host}, UNRAID_SHARE=Misc).`;
+}
+
+function refreshMacSetupPrompt() {
+  const el = $('#mac-setup-prompt');
+  if (el) el.textContent = buildMacSetupPrompt();
+}
+
+async function copyMacSetupPrompt() {
+  await copyText(buildMacSetupPrompt(), $('#btn-copy-mac-setup'));
+}
+
 async function loadDashboard() {
+  refreshMacInstallCmd();
   refreshMacSetupPrompt();
   const [stats, clients, immich] = await Promise.all([
     api('/api/stats'),
@@ -195,7 +220,15 @@ async function loadDashboard() {
   `;
   $('#sidebar-stats').innerHTML = `${a.message_count || 0} msgs · ${a.contact_count || 0} contacts`;
 
-  $('#clients-list').innerHTML = (clients.clients || []).map(c => `
+  const runs = clients.runs || [];
+  $('#clients-list').innerHTML = (clients.clients || []).map(c => {
+    const active = activeRunForClient(c.id, runs);
+    const running = !!(active || c.last_status === 'running' || c.trigger_pending);
+    const progressSrc = active || {};
+    const progressLabel = active
+      ? (active.message || active.phase || 'Backing up…')
+      : (c.trigger_pending ? 'Backup queued — waiting for Mac agent' : '');
+    return `
     <div class="client-card">
       <div class="client-head">
         <div>
@@ -203,8 +236,8 @@ async function loadDashboard() {
           <strong>${esc(c.name)}</strong>
         </div>
         <div style="display:flex;gap:.4rem;flex-wrap:wrap">
-          <button class="btn small" onclick="triggerBackup('${c.id}')">Backup now</button>
-          ${(c.last_status === 'running' || c.trigger_pending) ? `<button class="btn small secondary" onclick="stopBackup('${c.id}')">Stop</button>` : ''}
+          <button class="btn small" onclick="triggerBackup('${c.id}')" ${running ? 'disabled' : ''}>Backup now</button>
+          ${running ? `<button class="btn small secondary" onclick="stopBackup('${c.id}')">Stop</button>` : ''}
         </div>
       </div>
       <div class="muted" style="margin-top:.5rem;font-size:.85rem">
@@ -212,20 +245,24 @@ async function loadDashboard() {
         ${c.last_status ? ` · ${esc(c.last_status)}` : ''}
         ${c.trigger_pending ? ' · <strong style="color:var(--warn)">Backup queued</strong>' : ''}
       </div>
-    </div>
-  `).join('') || '<p class="muted">No Mac clients registered yet.</p>';
+      ${running ? progressBarHtml(progressSrc.bytes_done, progressSrc.bytes_total, progressLabel) : ''}
+    </div>`;
+  }).join('') || '<p class="muted">No Mac clients registered yet. Use the install command below.</p>';
 
-  $('#runs-list').innerHTML = (clients.runs || []).map(r => `
+  $('#runs-list').innerHTML = runs.map(r => {
+    const showBar = r.status === 'running' || (r.bytes_total && r.bytes_done != null);
+    return `
     <div class="run-row">
       <strong>${esc(r.client_name)}</strong> · ${esc(r.status)} · ${esc(r.phase || '')}
       ${r.schedule_name ? ` · <em>${esc(r.schedule_name)}</em>` : ''}
       <span class="muted"> · ${fmtTime(r.started_at)} · ${esc(r.triggered_by)}</span>
-      ${r.message ? `<div class="muted" style="margin-top:.3rem">${esc(r.message)}</div>` : ''}
-    </div>
-  `).join('') || '<p class="muted">No backups yet.</p>';
+      ${showBar ? progressBarHtml(r.bytes_done, r.bytes_total, r.message || '') : (r.message ? `<div class="muted" style="margin-top:.3rem">${esc(r.message)}</div>` : '')}
+    </div>`;
+  }).join('') || '<p class="muted">No backups yet.</p>';
 }
 
 $('#btn-copy-mac-setup')?.addEventListener('click', copyMacSetupPrompt);
+$('#btn-copy-install')?.addEventListener('click', () => copyText(buildMacInstallCmd(), $('#btn-copy-install')));
 
 window.triggerBackup = async (id) => {
   await api(`/api/clients/${id}/backup/trigger`, { method: 'POST' });
@@ -555,5 +592,6 @@ window.deleteSchedule = async (id) => {
 
 loadDashboard();
 setInterval(() => {
-  if ($('#view-dashboard').classList.contains('active')) loadDashboard();
-}, 15000);
+  if (!$('#view-dashboard').classList.contains('active')) return;
+  loadDashboard();
+}, 3000);

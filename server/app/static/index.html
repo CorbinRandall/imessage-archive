@@ -33,14 +33,17 @@
           <div class="setup-panel-head">
             <div>
               <strong>Add a Mac</strong>
-              <p class="muted setup-blurb">Download the Mac app — it opens <strong>Terminal</strong> with live status (connected / backing up / disconnected). Run <code>imessage-archive backup</code> for a progress bar through export, Immich upload, and sync.</p>
+              <p class="muted setup-blurb">On the Mac, open <strong>Terminal</strong> and run the install command below. That installs a background agent. Then grant Full Disk Access once. After that, start / watch / stop backups from this dashboard.</p>
             </div>
-            <a class="btn small" id="btn-download-mac" href="/download/mac-client.zip">Download Mac App</a>
+            <button type="button" class="btn small" id="btn-copy-install">Copy install command</button>
           </div>
+          <pre id="mac-install-cmd" class="setup-prompt" tabindex="0"></pre>
+          <p class="muted setup-blurb" style="margin-top:.65rem">Full Disk Access needed for: <code>/usr/bin/python3</code> and <code>imessage-exporter</code>. The installer opens Settings.</p>
           <details class="setup-advanced">
-            <summary>Or set up with an agent / Cursor</summary>
+            <summary>Advanced</summary>
             <div class="setup-advanced-body">
-              <button type="button" id="btn-copy-mac-setup" class="btn small secondary">Copy for agent</button>
+              <a class="btn small secondary" id="btn-download-mac" href="/download/mac-client.zip">Download legacy Mac .app</a>
+              <button type="button" id="btn-copy-mac-setup" class="btn small secondary">Copy Cursor agent prompt</button>
               <pre id="mac-setup-prompt" class="setup-prompt" tabindex="0"></pre>
             </div>
           </details>
