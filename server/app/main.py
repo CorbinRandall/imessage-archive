@@ -137,7 +137,10 @@ def download_mac_client(request: Request) -> Response:
 def download_install_mac(request: Request) -> Response:
     """One-liner installer for a Mac: curl this | bash."""
     server_url = _request_server_url(request)
-    host = getattr(request.url, "hostname", None) or "192.168.1.200"
+    host_header = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
+    host = host_header.split(":")[0].strip() if host_header else ""
+    if not host or host in ("127.0.0.1", "localhost"):
+        host = "192.168.1.200"
     script = f'''#!/usr/bin/env bash
 set -euo pipefail
 # iMessage Archive — Mac installer (served by {server_url})
